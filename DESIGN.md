@@ -740,11 +740,28 @@ this before trusting logged data.** If it misbehaves, R13 is already in the MISO
 | `sheet_preview.png` | Rendered preview |
 | `generator/` | The Python that produced all of it, plus the verifier |
 
-**Format is KiCad 8 (`20231120`).** KiCad refuses to open files newer than itself and
-every release stamps a different version, so no single file can be native to both KiCad 9
-and 10 at once. `20231120` is safely below KiCad 9's ceiling and is read natively by 8, 9
-and 10. Your KiCad will offer to bump it to its own format the first time you save —
-accept that, it is a one-way step you only take once.
+**Format is now KiCad 10.** The files on disk are:
+
+| File | Format version | Last written by |
+|---|---|---|
+| `Logging_Current_Meter.kicad_sch` | `20260306` | eeschema 10.0 |
+| `Logging_Current_Meter.kicad_pcb` | `20260206` | pcbnew 10.0 |
+| `LCM.kicad_sym` | `20231120` | the generator |
+
+KiCad refuses to open files newer than itself, so **KiCad 10 or newer is now required**;
+an older install will not open the project at all.
+
+The original generator output was KiCad 8 (`20231120`), chosen because it sits below
+KiCad 9's ceiling and is read natively by 8, 9 and 10, which made the generated files
+portable to whatever KiCad happened to be installed. That mattered while the schematic was
+machine-generated. KiCad 10 has since opened, accepted and rewritten both files, and that
+bump is one-way.
+
+`generator/kicad8.py` still hardcodes `SCH_VERSION = 20231120` and
+`GENERATOR_VERSION = "8.0"`. **Re-running `gen_sch.py` would therefore downgrade the
+schematic and discard every edit made in KiCad since.** Treat it as the script that
+produced Rev A, not as a tool to run again. `gen_pcb.py` was updated for KiCad 10 and
+emits placed KiCad 10 footprint blocks; `gen_sch.py` was not.
 
 Every symbol lives in `LCM.kicad_sym` on purpose. If the schematic referenced stock
 libraries, KiCad could re-link a symbol to a stock version whose pin geometry differs from
@@ -1011,8 +1028,9 @@ here. The sequence is:
 
 ### `generator/gen_pcb.py` — what it has done
 
-The board file is **KiCad 10 native (`20260206`)**, not the `20231120` the schematic uses.
-KiCad wrote it that way; there is nothing to gain from forcing it back.
+The board file is **KiCad 10 native (`20260206`)**. The schematic has since caught up and
+is now `20260306`, also KiCad 10. Both were written by KiCad itself, and there is nothing
+to gain from forcing either back to the generator's `20231120`.
 
 | Stage | Effect |
 |---|---|
@@ -1033,23 +1051,26 @@ Every stage is idempotent and takes a timestamped backup. Re-run the lot with
 > 1.6 mm stackup on open. Set the 1 oz outer / 0.5 oz inner copper weights in
 > **Board Setup → Physical Stackup** — they are a fab note, not something DRC consumes.
 
-### Two format assumptions still unverified
+### Two format assumptions, now confirmed
 
-These are the only things in the board file not confirmed against a KiCad-written
-example, and both are load-bearing. Check them the first time the board opens.
+These were the only things in the board file not confirmed against a KiCad-written
+example, and both were load-bearing. **Both are now verified.** KiCad 10 opened the board,
+accepted it without complaint, and rewrote it as format `20260206` with
+`(generator "pcbnew") (generator_version "10.0")`. A KiCad-written file is exactly the
+evidence that was missing.
 
-1. **Inner copper layer ordinals.** KiCad 9 renumbered the layer enum so copper takes the
-   even ordinals; F.Cu = 0 and B.Cu = 2 are what KiCad itself wrote into this file, and
-   every even ordinal above 2 is unused, so In1.Cu = 4 and In2.Cu = 6. Confirm
-   **Board Setup → Physical Stackup reads 4 copper layers.**
-2. **Zone and via net syntax.** Written as `(net "GND")` by name. Every pad in this file
-   that KiCad wrote uses that form, and there is no top-level `(nets …)` section for an
-   index to resolve against, so the name form is almost certainly right. The published
-   format docs at dev-docs.kicad.org still describe the KiCad 6–8 `(net 1) (net_name …)`
-   pair and predate this change, so they could not settle it.
+1. **Inner copper layer ordinals.** Assumed KiCad 9 renumbered the layer enum so copper
+   takes the even ordinals: F.Cu = 0, B.Cu = 2, and every even ordinal above 2 unused, so
+   In1.Cu = 4 and In2.Cu = 6. **Confirmed.** The saved file contains `F.Cu`, `In1.Cu`,
+   `In2.Cu` and `B.Cu`, and Board Setup reads four copper layers.
+2. **Zone and via net syntax.** Written as `(net "GND")` by name rather than the KiCad 6–8
+   `(net 1) (net_name …)` pair. **Confirmed.** The saved file still has no top-level
+   `(nets …)` section for an index to resolve against, and KiCad preserved the name form
+   on its own write. The published format docs at dev-docs.kicad.org predate this change
+   and could not settle it; the file itself now does.
 
-If either is wrong KiCad will refuse the file and name the offending line, the same way it
-caught the quoted-tag bug — noisy, not silent, and a one-line fix.
+Had either been wrong, KiCad would have refused the file and named the offending line, the
+same way it caught the quoted-tag bug: noisy, not silent, and a one-line fix.
 
 ### Verifying the board
 

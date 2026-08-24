@@ -70,6 +70,10 @@ script and checked by an independent verifier. The rule throughout: **the checke
 the finished file from disk and re-derives everything, so it can disagree with the tool that
 wrote it.**
 
+**Requires KiCad 10 or newer.** The schematic and board are now in KiCad 10 format
+(`20260306` and `20260206`), written by KiCad itself. KiCad refuses to open files stamped
+newer than the running version, so an older install will not open this project at all.
+
 ```bash
 cd generator
 
@@ -83,6 +87,11 @@ python3 copper_budget.py ../Logging_Current_Meter.kicad_pcb   # 150 A loss budge
 python3 region_map.py    ../Logging_Current_Meter.kicad_pcb   # the §14 layout map
 python3 render_pcb.py    ../Logging_Current_Meter.kicad_pcb ../placement.svg
 ```
+
+> **`gen_sch.py` is a historical build script, not a live tool.** `generator/kicad8.py`
+> hardcodes `SCH_VERSION = 20231120`, so re-running it would overwrite the KiCad 10
+> schematic with a KiCad 8 one and discard every edit made in KiCad since. `gen_pcb.py`
+> was updated for KiCad 10; `gen_sch.py` was not.
 
 `verify.py` rebuilds the netlist **geometrically**, so pins, wire endpoints and label anchors
 sharing a coordinate are one node, then compares it against an independently written
@@ -112,9 +121,10 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
   requires re-routing `T_NODE` and `T_POT_TOP`. See `DESIGN.md` §4.4.
 - **D1 / U1 courtyards overlap by 3.49 × 0.45 mm.** Checked: courtyard margin only, no pad,
   body or silk inside it. KiCad will still flag it.
-- **Two KiCad 10 format assumptions**, inner copper layer ordinals and zone/via nets
-  written by name, are documented in `DESIGN.md` §14. Both are load-bearing and neither is
-  confirmed against a KiCad-written example.
+- ~~**Two KiCad 10 format assumptions.**~~ **Resolved.** KiCad 10 opened the board,
+  accepted it and rewrote it as format `20260206`. Both assumptions in `DESIGN.md` §14
+  were correct: the stackup reads four copper layers, and there is no top-level `(nets …)`
+  index, so zone and via nets by name is the right form.
 - **Firmware.** Architecture is sketched in `DESIGN.md` §11; nothing is written. The known
   risk to test first is whether the display module's microSD tri-states MISO cleanly. R13
   is a 0 Ω placeholder in that path for exactly this reason.
