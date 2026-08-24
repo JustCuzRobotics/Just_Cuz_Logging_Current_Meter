@@ -1,0 +1,45 @@
+# ---- KiCad transient / per-user state ------------------------------------------------
+# Lock files exist only while the editor is open.
+*.lck
+~*.lck
+# Per-user view state: zoom, visible layers, active layer. Churns on every session and
+# means nothing to anyone else.
+*.kicad_prl
+# KiCad's own autosave and rescue output.
+_autosave-*
+*-rescue.lib
+*.kicad_sch-bak
+fp-info-cache
+
+# ---- this project's own backups -------------------------------------------------------
+# Every generator stage takes a timestamped copy before writing. Useful locally, noise in
+# history -- git is the backup once this is committed.
+*.bak-*
+Logging_Current_Meter-backups/
+
+# ---- 3D models ------------------------------------------------------------------------
+# STEP/WRL models are needed only for 3D rendering, never for fabrication, and they are
+# ~26 MB. KiCad re-resolves them from your own library paths.
+*.3dshapes/
+*.step
+*.stp
+*.wrl
+
+# Partial.3dshapes additionally held models from unrelated projects (BeeBox, Buoyancy,
+# Mag, Repeat_Compact_colored) -- excluded deliberately, not just for size.
+Partial.3dshapes/
+
+# ---- vendor download dumps ------------------------------------------------------------
+# The *symbols and footprints* from these are kept, because DESIGN.md cites them as the
+# provenance for several LCM.pretty footprints. The bulk archives are not.
+*.zip
+parts-dump-pcb/**/*.htm
+easyECADDownloader/**/*.pdf
+
+# ...except the fabrication package actually sent to the board house. That one archive is
+# what makes this repo reproducible by someone else, so it is kept deliberately.
+!production/*.zip
+
+# ---- python ---------------------------------------------------------------------------
+__pycache__/
+*.pyc

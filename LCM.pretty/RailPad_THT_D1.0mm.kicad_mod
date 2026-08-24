@@ -1,0 +1,17 @@
+(footprint "RailPad_THT_D1.0mm"
+  (version 20231120)
+  (generator "lcm_gen")
+  (layer "F.Cu")
+  (descr "Spare power/ground pad. 1.0 mm plated hole so a wire can be soldered through.")
+  (tags "rail pad power spare")
+  (attr exclude_from_pos_files exclude_from_bom)
+  (fp_text reference "REF**" (at 0 -2.6) (layer "F.SilkS")
+    (effects (font (size 0.8 0.8) (thickness 0.12))))
+  (fp_text value "RailPad_THT_D1.0mm" (at 0 2.6) (layer "F.Fab") hide
+    (effects (font (size 0.8 0.8) (thickness 0.12))))
+  (fp_text user "${REFERENCE}" (at 0 -2.6) (layer "F.Fab")
+    (effects (font (size 0.8 0.8) (thickness 0.12))))
+  (fp_circle (center 0 0) (end 1.55 0) (stroke (width 0.12) (type solid)) (fill none) (layer "F.SilkS"))
+  (fp_circle (center 0 0) (end 1.8 0) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd"))
+  (pad "1" thru_hole circle (at 0 0) (size 2.0 2.0) (drill 1.0) (layers "*.Cu" "*.Mask"))
+)

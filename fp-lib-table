@@ -1,0 +1,5 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "LCM") (type "KiCad") (uri "${KIPRJMOD}/LCM.pretty") (options "") (descr "ESC Test Bench Mainboard project footprints"))
+	(lib (name "easyECADDownloader") (type "KiCad") (uri "${KIPRJMOD}/easyECADDownloader/easyECADDownloader.pretty") (options "") (descr ""))
+)

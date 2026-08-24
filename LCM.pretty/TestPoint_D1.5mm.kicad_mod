@@ -1,0 +1,17 @@
+(footprint "TestPoint_D1.5mm"
+  (version 20231120)
+  (generator "lcm_gen")
+  (layer "F.Cu")
+  (descr "Probe pad, 1.5 mm bare copper. No paste aperture, so reflow leaves it flat and it stays probe-friendly.")
+  (tags "test point probe pad")
+  (attr exclude_from_pos_files exclude_from_bom)
+  (fp_text reference "REF**" (at 0 -2.2) (layer "F.SilkS")
+    (effects (font (size 0.8 0.8) (thickness 0.12))))
+  (fp_text value "TestPoint_D1.5mm" (at 0 2.2) (layer "F.Fab") hide
+    (effects (font (size 0.8 0.8) (thickness 0.12))))
+  (fp_text user "${REFERENCE}" (at 0 -2.2) (layer "F.Fab")
+    (effects (font (size 0.8 0.8) (thickness 0.12))))
+  (fp_circle (center 0 0) (end 1.15 0) (stroke (width 0.12) (type solid)) (fill none) (layer "F.SilkS"))
+  (fp_circle (center 0 0) (end 1.5 0) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd"))
+  (pad "1" smd circle (at 0 0) (size 1.5 1.5) (layers "F.Cu" "F.Mask"))
+)

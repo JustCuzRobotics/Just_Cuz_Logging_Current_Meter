@@ -1,0 +1,9 @@
+EESchema-DOCLIB  Version 2.0
+#
+$CMP ACS758KCB-150B-PFF-T
+D Thermally Enhanced, Fully Integrated, Hall-Effect-Based Linear Current Sensor IC with 100 ?? Current Conductor
+K
+F https://www.allegromicro.com/-/media/files/datasheets/acs758-datasheet.ashx
+$ENDCMP
+#
+#End Doc Library

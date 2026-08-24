@@ -1,0 +1,348 @@
+
+(kicad_symbol_lib (version 20211014) (generator kicad_symbol_editor)
+  (symbol "ACS770KCB-150U-PFF-T" (pin_names (offset 1.016)) (in_bom yes) (on_board yes)
+    (property "Reference" "U" (id 0) (at -7.62916 10.1722 0)
+      (effects (font (size 1.27 1.27)) (justify bottom left))
+    )
+    (property "Value" "ACS770KCB-150U-PFF-T" (id 1) (at -7.62706 -12.7118 0)
+      (effects (font (size 1.27 1.27)) (justify bottom left))
+    )
+    (property "Footprint" "ACS770KCB-150U-PFF-T:XDCR_ACS770KCB-150U-PFF-T" (id 2) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "MF" "Allegro MicroSystems LLC" (id 4) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Description" "\n                        \n                            Current Sensor 150A 1 Channel Hall Effect, Open Loop Unidirectional 5-CB Formed Leads, PFF\n                        \n" (id 5) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Package" "5-CB-5 Allegro MicroSystems LLC" (id 6) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Price" "None" (id 7) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Check_prices" "https://www.snapeda.com/parts/ACS770KCB-150U-PFF-T/Allegro/view-part/?ref=eda" (id 8) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "STANDARD" "Manufacturer Recommendations" (id 9) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "PARTREV" "8" (id 10) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "SnapEDA_Link" "https://www.snapeda.com/parts/ACS770KCB-150U-PFF-T/Allegro/view-part/?ref=snap" (id 11) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "MP" "ACS770KCB-150U-PFF-T" (id 12) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Availability" "In Stock" (id 13) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "MANUFACTURER" "ALLEGRO MICROSYSTEMS,LLC" (id 14) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (symbol "ACS770KCB-150U-PFF-T_0_0"
+      (rectangle (start -7.62 -10.16) (end 7.62 10.16)
+        (stroke (width 0.254)) (fill (type background))
+      )
+      (pin power_in line (at 12.7 -7.62 180.0) (length 5.08)
+        (name "GND"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "2"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin power_in line (at 12.7 7.62 180.0) (length 5.08)
+        (name "VCC"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "1"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin output line (at 12.7 0.0 180.0) (length 5.08)
+        (name "VIOUT"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "3"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08)
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_1"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_2"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_3"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_4"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_5"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_6"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_7"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_8"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_9"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_10"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_11"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_12"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_13"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_14"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_15"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 2.54 0) (length 5.08) hide
+        (name "IP+"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "4_16"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08)
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_1"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_2"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_3"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_4"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_5"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_6"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_7"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_8"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_9"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_10"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_11"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_12"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_13"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_14"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_15"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -12.7 -2.54 0) (length 5.08) hide
+        (name "IP-"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "5_16"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+    )
+  )
+)

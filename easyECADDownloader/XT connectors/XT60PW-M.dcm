@@ -1,0 +1,9 @@
+EESchema-DOCLIB  Version 2.0
+#
+$CMP XT60PW-M
+D Socket; DC supply; XT60; male; PIN: 2; on PCBs; THT; yellow; 30A; 500V
+K
+F https://www.tme.eu/Document/b13629717d44ae038681dba08d18c0b6/XT60PW-M.pdf
+$ENDCMP
+#
+#End Doc Library
