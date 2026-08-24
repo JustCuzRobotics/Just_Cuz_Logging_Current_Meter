@@ -22,7 +22,7 @@ order.** Firmware not yet written.
 | Logging | microSD **and** USB CDC at 100 Hz |
 | Channels | current, pack voltage, 5 V rail, 1× 100 k NTC, plus ESC signal out |
 | Board | 95 × 62 mm, 4 layer, 1 oz outer / 0.5 oz inner |
-| Parts cost | ≈ $10.75/board, of which the ACS770 alone is $9.98 |
+| Parts cost | ≈ $15/board, of which the ACS770 alone is $9.98 |
 
 **Read the accuracy budget in [`DESIGN.md`](DESIGN.md) §5 before trusting a number.** Short
 version: honest between roughly 30 A and 150 A, and increasingly meaningless below ~20 A,
@@ -158,4 +158,4 @@ design or hardware.
 Because commercial sale is restricted, this is source-available rather than open source in
 the OSI or OSHWA sense.
 
-Copyright © 2026 Seth Schaffer / Just Cuz Robotics
+Copyright © 2026 Seth Schaffer / Just 'Cuz Robotics
