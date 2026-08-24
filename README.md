@@ -128,7 +128,26 @@ the full comparison, including which of the commonly-quoted differences are wron
 
 ## Licence
 
-**Not yet chosen.** Without one, nobody has the legal right to use this design.
-[CERN-OHL-S v2](https://cern-ohl.web.cern.ch/) is the usual choice for strongly-reciprocal
-open hardware; MIT if you want maximum permissiveness. Drop the full text in as `LICENSE`
-and update this section.
+Two licences, because hardware and software need different ones:
+
+- **Hardware** — schematic, PCB, footprints, symbols, BOM and documentation are
+  [CC BY-NC-SA 4.0](LICENSE).
+- **Software** — the Python in `generator/` is
+  [PolyForm Noncommercial 1.0.0](generator/LICENSE).
+
+**In plain terms.** Build one for yourself. Modify it. Share your modifications, as long as
+you credit this project and licence your version the same way. What you may not do is sell
+this design, or hardware built from it, without permission — kits are how this project funds
+itself.
+
+Both licences restrict commercial use, so this is *source-available* rather than open source
+in the OSI or OSHWA sense. That is deliberate, and it is the only restriction.
+
+Interpreting "noncommercial": a hobbyist building one for personal use is fine. Using one in
+a business, building them for sale, or bundling the design into a commercial product is not.
+If you are somewhere in between — a monetised video, a makerspace, a classroom — just ask;
+the answer is usually yes.
+
+Commercial licensing and kit enquiries: **team@justcuzrobotics.com**
+
+Copyright © 2026 Seth Schaffer / Just Cuz Robotics
