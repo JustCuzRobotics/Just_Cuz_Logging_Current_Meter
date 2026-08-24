@@ -3,11 +3,51 @@ Required Notice: Copyright (c) 2026 Seth Schaffer / Just Cuz Robotics
 
 This license applies to the Python source code in this generator/ directory.
 The hardware design in the parent directory is licensed separately under
-CC BY-NC-SA 4.0 — see ../LICENSE.
+CC BY-NC-SA 4.0. See ../LICENSE.
 
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-For commercial licensing, contact team@justcuzrobotics.com.
+
+ADDITIONAL PERMISSIONS GRANTED BY THE LICENSOR
+-----------------------------------------------------------------------
+
+As copyright holder, Seth Schaffer / Just Cuz Robotics grants every
+recipient of this software the following permissions in addition to
+those granted below. Where these conflict with the definition of a
+permitted purpose in the terms below, these permissions control.
+
+The following are permitted purposes, regardless of whether they are
+commercial:
+
+  1. Running this software to design, generate, verify, or document
+     hardware, including within a business, a paid service operation,
+     a makerspace, a laboratory, or an educational institution.
+
+  2. Creating and distributing media about this software, including
+     monetized video, paid courses, workshops, and printed articles.
+
+  3. Distributing this software, modified or unmodified, at no charge,
+     provided the notices below are preserved.
+
+The following remain prohibited without separate written permission:
+
+  4. Selling, licensing, or otherwise supplying this software for
+     payment, whether modified or unmodified.
+
+  5. Incorporating this software into any product, service, or bundle
+     that is offered for sale.
+
+  6. Manufacturing or selling hardware produced using this software
+     where that hardware is based on the design in the parent
+     directory. Hardware of your own design that merely happens to
+     have been processed by these scripts is not restricted.
+
+To request permission for any use in items 4 through 6, contact
+team@justcuzrobotics.com.
+
+These additional permissions apply to this software and to any
+derivative distributed under this license. They may not be revoked for
+copies already distributed.
 
 =======================================================================
 

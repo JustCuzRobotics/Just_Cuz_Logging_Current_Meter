@@ -1,8 +1,8 @@
-Just Cuz Logging Current Meter — ESC Test Bench Mainboard
+RC Logging Current Meter, ESC Test Bench Mainboard
 Copyright (c) 2026 Seth Schaffer / Just Cuz Robotics
 
-The hardware design in this repository — schematic, PCB layout, footprints,
-symbols, bill of materials, and documentation — is licensed under the
+The hardware design in this repository, meaning the schematic, PCB layout,
+footprints, symbols, bill of materials, and documentation, is licensed under the
 Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 License (CC BY-NC-SA 4.0). The full license text follows below.
 
@@ -11,11 +11,56 @@ SPDX-License-Identifier: CC-BY-NC-SA-4.0
 The Python source code in generator/ is licensed separately under the
 PolyForm Noncommercial License 1.0.0. See generator/LICENSE.
 
-In short: you may build, modify, and share this design for noncommercial
-purposes, with attribution, and any derivative you share must carry this
-same license. Selling this design, or hardware built from it, requires
-separate written permission. For commercial licensing, contact
+
+ADDITIONAL PERMISSIONS GRANTED BY THE LICENSOR
+-----------------------------------------------------------------------
+
+As copyright holder, Seth Schaffer / Just Cuz Robotics grants every
+recipient of this work the following permissions in addition to those
+granted by CC BY-NC-SA 4.0. Where these conflict with the definition of
+"NonCommercial" in Section 1(k) of the license below, these permissions
+control.
+
+You may, for any purpose including a commercial one:
+
+  1. Build, assemble, and use this hardware, including in a business,
+     a paid service or repair operation, a makerspace, a laboratory,
+     or any educational institution.
+
+  2. Create and distribute media about this work, including monetized
+     video, streaming, advertising-supported publications, paid
+     courses, workshops, and printed articles.
+
+  3. Use this work, or hardware built from it, as a tool in the course
+     of commercial activity, including testing, development,
+     manufacturing, and quality control.
+
+  4. Distribute the design files, modified or unmodified, provided you
+     do so at no charge and comply with the attribution and ShareAlike
+     conditions of the license below.
+
+You may NOT, without separate written permission:
+
+  5. Sell, license, or otherwise supply for payment the design files
+     themselves, whether modified or unmodified.
+
+  6. Manufacture, offer for sale, or sell hardware based on this
+     design, whether as assembled boards, bare printed circuit boards,
+     kits, partial kits, or subassemblies.
+
+  7. Incorporate this design, or hardware based on it, into any product
+     or bundle that is offered for sale.
+
+For the avoidance of doubt: recovering the actual cost of materials for
+boards built for another person at no profit is permitted under item 1.
+Anything resembling production for sale is not.
+
+To request permission for any use in items 5 through 7, contact
 team@justcuzrobotics.com.
+
+These additional permissions apply to this work and to any derivative
+distributed under this license. They may not be revoked for copies
+already distributed.
 
 =======================================================================
 
