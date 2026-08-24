@@ -43,3 +43,9 @@ easyECADDownloader/**/*.pdf
 # ---- python ---------------------------------------------------------------------------
 __pycache__/
 *.pyc
+
+# ---- private working notes -------------------------------------------------------------
+# memory.md is the cross-machine scratch file: environment setup, current state, what to
+# pick up next, licensing rationale. Deliberately local -- it carries working context and
+# loose ends that do not belong in public history. Copy it by hand when moving machines.
+memory.md
