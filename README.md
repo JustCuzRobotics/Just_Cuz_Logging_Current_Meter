@@ -22,7 +22,8 @@ order.** Firmware not yet written.
 | Logging | microSD **and** USB CDC at 100 Hz |
 | Channels | current, pack voltage, 5 V rail, 1× 100 k NTC, plus ESC signal out |
 | Board | 95 × 62 mm, 4 layer, 1 oz outer / 0.5 oz inner |
-| Parts cost | ≈ $15/board, of which the ACS770 alone is $9.98 |
+| Assembled PCB | ≈ $15/board delivered, at qty 10 (JLCPCB: bare board + SMT parts + assembly + shipping) |
+| Complete unit | ≈ $44/board, adding the display, RP2040-Zero, connectors, NTC and hardware |
 
 **Read the accuracy budget in [`DESIGN.md`](DESIGN.md) §5 before trusting a number.** Short
 version: honest between roughly 30 A and 150 A, and increasingly meaningless below ~20 A,
@@ -130,6 +131,14 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
   is a 0 Ω placeholder in that path for exactly this reason.
 
 ## Sourcing note
+
+Three cost figures get confused, so to be explicit. `BOM.md`'s **$10.75** is the theoretical
+SMT parts cost at LCSC unit prices, and it is the only one the generator computes. The
+**$15** above is what a delivered assembled board actually cost at qty 10, and the real
+PCBA line came in at $11.06/board against that $10.75 estimate, which is close enough to
+validate the generated BOM. **$44** is a complete working meter, and the display alone is
+$18.99 of it. All three are at qty 10; setup and shipping amortise, so a one-off build costs
+considerably more per board.
 
 The ACS770 is marked *not for new designs* but remains in stock. **ACS772KCB-150U-PFF-T is
 a drop-in replacement requiring no board changes at all**, same package, same 26.66 mV/A,
