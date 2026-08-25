@@ -189,6 +189,59 @@ wrecks the anti-aliasing for a 2 kHz sample rate. Don't.
 > is off the ACS772's specified condition, so whether it lands better or worse than 6 mV
 > there is not knowable from the datasheets — measure it if you swap.
 
+### 4.1.2 Sensor supply and decoupling
+
+Asked often enough to be worth answering here: **where is the ACS770's decoupling
+capacitor?** It is `C1`, and it is not on the raw +5 V rail — the sensor gets its own
+ferrite-isolated island.
+
+```
++5V ──┬── C10 100 uF ── FB1 ──┬── +5VS ── U1.1  (VCC)
+      │                 600R  ├── C1  100 nF
+      │              @100 MHz ├── C2  10 uF
+      └── (MCU, display)      └── R5 ── V5_SENSE divider
+```
+
+The `+5VS` net is exactly `{U1.1, FB1.2, C1.1, C2.1, R5.1}`.
+
+| Part | Role | Distance from U1 pin 1 |
+|---|---|---|
+| `FB1` 600R@100MHz, 2A | series isolation from MCU/display switching noise | 3.52 mm |
+| `C1` 100 nF | HF decoupling | **8.01 mm** |
+| `C2` 10 uF | local bulk | 12.51 mm |
+| `C10` 100 uF | +5 V bulk, upstream of FB1 | 9.62 mm |
+
+**`C3` is not supply decoupling** and the two get confused. `C3` (10 nF) sits on `I_RAW`
+/ VIOUT, 3.55 mm from U1 pin 3. It is the datasheet's *output* load capacitance, at the
+specified **maximum** — the sensor's quoted 6 mV noise figure is characterised at exactly
+this value. Do not increase it, and do not remove it thinking it is a bypass cap.
+
+**Why R5 taps `+5VS` and not `+5V`.** This is the part that actually makes the
+measurement work. Section 4.2 recovers current from `ADC_I / ADC_5V`, so the reference
+divider must see the *same* rail the sensor runs on. It does — `R5.1` is on `+5VS`,
+downstream of the ferrite. Any drop or noise across `FB1` is therefore common to both
+the sensor output and the reference measurement, and cancels algebraically. Tapping R5
+off `+5V` instead would leave the ferrite's drop uncancelled and would be a real bug.
+It is worth checking this survives any future re-layout.
+
+> **Known weakness: C1 is 8 mm from the pin, and the ordering is backwards.**
+> Conventional practice puts a 100 nF decoupler under ~5 mm, and puts the shunt cap
+> nearest the pin with the series element further out. Here the physical order along the
+> rail is U1 → FB1 → C1 → C2, so the closest part to VCC is the series ferrite.
+> Electrically the topology is correct (ferrite in series, caps shunting on the load
+> side); only the placement fails to reflect it.
+>
+> It works regardless, for three reasons worth stating rather than assuming:
+> the ACS770 is not a switching load (~14 mA steady, no fast transient demand); the
+> bandwidth is deliberately discarded downstream (`C4` puts the anti-alias corner at
+> 10 kHz against the sensor's 120 kHz, and firmware decimates to ~2 kHz), so HF supply
+> behaviour never reaches the ADC; and the ratiometric architecture above cancels supply
+> variation as common mode rather than relying on the rail being quiet.
+>
+> **Rev B: swap `C1` and `FB1`.** A series element's position along the run barely
+> matters; a decoupling capacitor's does. That puts C1 about 2.5 mm from the pin at no
+> cost.
+
 ### 4.2 The ratiometric trick (why R5/R8 exist)
 
 The ACS770 output scales with its own supply, and that supply is raw USB VBUS — which

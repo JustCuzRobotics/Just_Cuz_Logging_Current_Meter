@@ -44,6 +44,16 @@ easyECADDownloader/**/*.pdf
 __pycache__/
 *.pyc
 
+# ---- editor local history ---------------------------------------------------------------
+# VS Code Local History extension scratch area. Contains its own empty .git, which would
+# otherwise be committed as a broken nested repo.
+.history/
+
+# ---- purchase records --------------------------------------------------------------------
+# LCM_Purchased_BOM.xlsx carries Amazon and JLCPCB order numbers and affiliate links.
+# Keep the working copy local; publish a sanitised export instead if it is wanted publicly.
+LCM_Purchased_BOM.xlsx
+
 # ---- private working notes -------------------------------------------------------------
 # memory.md is the cross-machine scratch file: environment setup, current state, what to
 # pick up next, licensing rationale. Deliberately local -- it carries working context and
