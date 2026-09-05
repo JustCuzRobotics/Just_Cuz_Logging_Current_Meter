@@ -1,162 +1,114 @@
 # Firmware
 
-Arduino firmware for the RC Logging Current Meter, Rev A hardware.
-
 | Sketch | Purpose |
 |---|---|
-| `display_bringup/` | Hardware diagnostic — proves the FPC ribbon, ST7796U panel, FT6336U touch, backlight and buttons before any real firmware is written |
+| `display_bringup/` | Full board diagnostic and calibration tool. Exercises all 20 usable GPIO, reports pass/fail per subsystem with net names, and fits the analog calibration constants |
 
-Nothing here reads the current, voltage or thermistor channels yet. See
-`DESIGN.md` §11 for the intended architecture.
+The real logging firmware is **not started**. Its architecture, and the sampling
+constraints measured on hardware, are in `DESIGN.md` §11.
 
 ---
 
-## `display_bringup` — first power-up diagnostic
+## `display_bringup`
 
-This is a **diagnostic, not a demo**. Every stage prints `[ OK ]` or `[FAIL]`
-over USB serial naming the net and FPC pin involved, so a dead conductor
-identifies itself instead of leaving you looking at a blank panel.
+**Everything reports over USB serial at 115200.** The display is treated as one more
+subsystem under test — if the panel is dead, every other test still runs and still reports.
+Do not rely on the screen to tell you anything.
 
-> **USB power only.** Nothing in the 60 V current path while this runs. No pack,
-> no ESC, nothing in J1/J3.
-
-### Before you plug anything in
-
-Board unpowered, DMM in continuity mode:
-
-1. **Bridge `JP1`.** It ships open, and with all three pads open the display has
-   **no power at all** — this is the single most likely reason for a dead screen
-   on a first build.
-   - `JP1` pad 2 is `DISP_VCC` → FPC pin 1.
-   - Bridge **pad 2 to pad 1 (`+5V`)**. The module's spec calls for 5 V and its
-     own ESP32 reference wiring runs VCC = 5 V against 3.3 V logic, which is
-     exactly our case — the module has onboard level conversion.
-   - Pad 3 (`+3V3`) also works, but the vendor notes *"when connected to 3.3 V
-     the backlight brightness will be slightly dim."*
-   - Confirm pad 2 is **not** shorted to both 1 and 3.
-2. **Check `R11`–`R14` are actually fitted.** All four are 0 Ω placeholders in
-   the SPI and backlight paths (`R11` SCK, `R12` MOSI, `R13` MISO, `R14`
-   backlight). A missing one is an open circuit, not a default.
-3. **Check ribbon orientation.** The supplied 14P FPC is a **reverse** cable —
-   contacts on opposite faces at each end. With the cable seated, buzz `J7`
-   pin 1 → module `VCC` and `J7` pin 14 → module `SD_CS`. If those two are
-   swapped, the cable or the connector latch is backwards.
-4. **No `DISP_VCC` → `GND` short.**
+> **USB power only.** Nothing in the 60 V current path, except during a deliberate voltage
+> calibration. The sketch checks `V_PACK` at boot and shouts if it sees pack voltage.
 
 ### Toolchain
 
-- **Board:** Arduino IDE → Boards Manager → *"Raspberry Pi Pico/RP2040"* by
-  **Earle Philhower**. Select **Waveshare RP2040 Zero**.
-- **Library:** Library Manager → **"GFX Library for Arduino"** by
-  *moononournation* (the `Arduino_GFX` library).
-- **Touch:** no library. The FT6336U is driven register-direct in the sketch, so
-  a failure points at a register read rather than someone else's abstraction.
-- **Serial monitor:** 115200 baud.
+- **Board:** Arduino IDE → *"Raspberry Pi Pico/RP2040"* by **Earle Philhower**, board
+  **Waveshare RP2040 Zero**
+- **Library:** **"GFX Library for Arduino"** by *moononournation*. **Not Adafruit_GFX** —
+  different library, different header, no ST7796 driver
+- **Touch:** no library; the FT6336U is driven register-direct
+- **Serial Monitor:** 115200, and **set the line ending to Newline** or no command you type
+  will ever register
 
-Chosen over TFT_eSPI deliberately for bring-up: every pin is declared in the
-`.ino`, so a blank screen can never be blamed on a stale `User_Setup.h`.
-`DESIGN.md` §11 still targets TFT_eSPI for the real graphing UI — switch once
-the hardware is proven, not before.
+### Commands
+
+| | |
+|---|---|
+| `a` / `A` | analog report, with expected values / streaming at 2 Hz |
+| `b` | button report — idle level, press count, hold time, measured bounce |
+| `c` | show the stored calibration constants |
+| `s` | GPIO bridge / short test (unplug the ribbon first) |
+| `k` | backlight ramp |
+| `m` | MISO read-back, the `DESIGN.md` §11 test |
+| `d` | display test pattern |
+| `t` / `x` | touch controller scan and identity / coordinate stream |
+| `g` | **live V/I graph — 5 s scrolling window, volts blue, amps red** |
+| `e` / `l` | ESC signal output on GP1 / GP0↔ESC_SIG loopback |
+| `n` / `v` / `i` | thermistor / voltage / current calibration |
+| `r` / `?` | re-run the full sequence / help |
+
+Streams stop on any key — an actual character, not a bare Enter.
+
+### Calibration
+
+Constants are **baked into the top of the sketch** and applied from boot, so they survive a
+reflash. Each routine prints `#define` lines to paste back in. Press `c` to see what is
+stored and which channels are genuinely calibrated.
+
+Current state: voltage **fitted**, thermistor **fitted**, current **zero fitted / gain
+nominal**. Full procedure and the reasoning behind each choice is in `DESIGN.md` §6.
+
+Three things that will waste your time if you skip them:
+
+- **Voltage needs two points with an offset**, not one through the origin. There is a real
+  8.2 ADC count zero offset; ignoring it costs over 1 % at low pack voltages.
+- **Fit the current gain at the highest current you can source.** The ±1.5 A nonlinearity
+  floor is ±5 % of a 30 A fit but ±37 % of a 4 A one.
+- **Do not use an ice bath for the thermistor.** Wet leads shunt it by ~340 kΩ — a 49 %
+  error at 0 °C and 2 % at 100 °C. Room temperature plus boiling gives 77 °C of spread and
+  works properly.
+
+### Before first power-up on a new board
+
+Board unpowered, DMM in continuity mode. All three of these cost an evening each the first
+time. `DESIGN.md` §9 has the detail.
+
+1. **Bridge `JP1`** — pad 2 (`DISP_VCC`) to pad 1 (`+5V`). It ships open and it is the
+   display's only supply. Confirm pad 2 is *not* also bridged to pad 3.
+2. **Use a Type A (same-side) FFC cable** for `J7`. The one in the display's box is Type B
+   and reverses the pin order.
+3. **Check `R11`–`R14` are fitted.** All four are 0 Ω placeholders in the SPI and backlight
+   paths; a missing one is an open circuit, not a default.
+
+### Known Rev A fault
+
+**SW1 and SW2 are permanently shorted to GND** — the `SW_TS-1187A` footprint pad remap
+assumed the wrong internal pairing. Everything is therefore driven by serial commands. Any
+firmware built on this must not assume the buttons exist. `DESIGN.md` §9.
 
 ### Pin map
 
-Mirrors `EXPECTED_MCU` / `EXPECTED_DISPLAY` in `generator/verify.py`. Verified
-against both `verify.py` and the vendor's own pin table — all 14 agree, no
-transposition. If you change one, change the other and re-run `verify.py`.
+Mirrors `EXPECTED_MCU` in `generator/verify.py`. Verified against both that and the
+module's own pin table.
 
-| FPC | Module pin | Net | RP2040 | Notes |
-|---|---|---|---|---|
-| 1 | VCC | `DISP_VCC` | — | via `JP1` |
-| 2 | GND | `GND` | — | |
-| 3 | LCD_CS | `LCD_CS` | GP5 | |
-| 4 | LCD_RST | `LCD_RST` | GP7 | low = reset |
-| 5 | LCD_RS | `LCD_RS` | GP6 | D/C: high = data |
-| 6 | SDI (MOSI) | `SPI_MOSI` | GP3 | via `R12` |
-| 7 | SCK | `SPI_SCK` | GP2 | via `R11` |
-| 8 | LED | `DISP_LED` | GP8 | via `R14`, PWM |
-| 9 | SDO (MISO) | `SPI_MISO` | GP4 | via `R13` — see §11 test below |
-| 10 | CTP_SCL | `CTP_SCL` | GP11 | I²C1 |
-| 11 | CTP_RST | `CTP_RST` | GP12 | low = reset |
-| 12 | CTP_SDA | `CTP_SDA` | GP10 | I²C1 |
-| 13 | CTP_INT | `CTP_INT` | GP13 | |
-| 14 | SD_CS | `SD_CS` | GP9 | parked HIGH for the whole run |
+| FPC | Module | Net | RP2040 |
+|---|---|---|---|
+| 1 | VCC | `DISP_VCC` | via `JP1` |
+| 2 | GND | `GND` | — |
+| 3 | LCD_CS | `LCD_CS` | GP5 |
+| 4 | LCD_RST | `LCD_RST` | GP7 |
+| 5 | LCD_RS | `LCD_RS` | GP6 |
+| 6 | SDI (MOSI) | `SPI_MOSI` | GP3 via `R12` |
+| 7 | SCK | `SPI_SCK` | GP2 via `R11` |
+| 8 | LED | `DISP_LED` | GP8 via `R14` |
+| 9 | SDO (MISO) | `SPI_MISO` | GP4 via `R13` |
+| 10 | CTP_SCL | `CTP_SCL` | GP11 |
+| 11 | CTP_RST | `CTP_RST` | GP12 |
+| 12 | CTP_SDA | `CTP_SDA` | GP10 |
+| 13 | CTP_INT | `CTP_INT` | GP13 |
+| 14 | SD_CS | `SD_CS` | GP9 |
 
-`SW1` → GP14 (`BTN1`, MODE), `SW2` → GP15 (`BTN2`, ZERO/TARE). `R15`/`R16` are
-marked not-fitted, so both use the RP2040's internal pull-ups and read active
-low.
-
-### What it does, in order
-
-| Stage | Proves |
-|---|---|
-| Park `SD_CS` HIGH | First GPIO touched. The microSD can never be selected during LCD init |
-| Backlight ramp | GP8 → `R14` → FPC 8 → module transistor, **with no SPI involved** |
-| MISO read-back | The `DESIGN.md` §11 test — see below |
-| `gfx->begin()` + colour bars, corner markers | SPI data path, rotation, full 480×320 window |
-| I²C scan + FT6336U ID | FPC 10/11/12, and that the touch controller is alive |
-| Touch crosshair, buttons | Coordinate mapping and `SW1`/`SW2` |
-
-### The `DESIGN.md` §11 test
-
-The microSD on this module shares MISO with the LCD, and cheap modules sometimes
-fail to tri-state SD MISO when `SD_CS` is high — which corrupts LCD reads.
-`R13` is the 0 Ω placeholder in that path for exactly this reason.
-
-The sketch reads the ST7796U's `0xD3` ID register by **bit-banging** the bus
-before `Arduino_GFX` claims `spi0`, with every pin as a plain GPIO. That depends
-on nothing but copper.
-
-- **`0x7796` comes back** → MISO is continuous end to end **and** the microSD is
-  tri-stating correctly. §11 is answered, `R13` stays 0 Ω. Record this.
-- **All `0x00` or all `0xFF`** → MISO stuck. Check `R13` is fitted, FPC 9, and
-  ribbon seating.
-- **Anything else** → inconclusive, not proof of a fault. Some level-shifted
-  modules buffer MISO in a way that needs the panel initialised first. The panel
-  can still work perfectly; only the read path is in question.
-
-### Expected good run
-
-```
-backlight ramps 0 → full
-five full-screen colour fills
-eight vertical colour bars
-corner markers in all four corners + white border + diagonals
-serial: [ OK ] ST7796U ID read back  -- 0x7796 seen
-serial: [ OK ] device at 0x38  -- FT6336U answering
-serial: [ OK ] FT6336U identity  -- 0x64 + FocalTech vendor 0x11
-status screen, then a green crosshair that tracks your fingertip
-```
-
-### Tuning after the first clean run
-
-Everything below is at the top of `display_bringup.ino`:
-
-- **`LCD_ROTATION`** — `1` or `3` for landscape. Use `3` if the image is upside
-  down relative to how the enclosure will sit.
-- **`TOUCH_INVERT_X` / `TOUCH_INVERT_Y`** — the touch panel reports in its
-  native **320×480 portrait** frame while the display runs 480×320 landscape, so
-  the axes are swapped in software. If the crosshair is mirrored relative to
-  your finger, flip the corresponding one to `1`. The serial log prints raw and
-  mapped coordinates side by side so you can see which axis is wrong.
-- **`SPI_HZ`** — starts at a deliberately slow 12 MHz. Raise it (the panel will
-  take 40 MHz+) only **after** a clean run, so a speed problem can never be
-  confused with a wiring problem.
-
-### Record the results
-
-Two outcomes belong in `DESIGN.md` §11 once you have them:
-
-1. The MISO tri-state answer — it decides whether `R13` stays 0 Ω or Rev B needs
-   a change.
-2. The working `LCD_ROTATION` and touch inversion constants.
-
-### Buttons during the run
-
-- **SW1** (GP14) cycles the backlight through 16 / 64 / 128 / 255.
-- **SW2** (GP15) redraws the status screen. This is the tare button in the final
-  firmware, so it is worth exercising.
+Analog: GP26 `I_SENSE`, GP27 `V_PACK`, GP28 `T_SENSE`, GP29 `V5_SENSE`.
+Other: GP0 spare (J13 pad), GP1 `ESC_SIG_MCU`, GP14/GP15 buttons.
 
 ---
 
 Per `memory.md` §3: `git pull` at the start of a session, `git push` at the end.
-Do not leave board or firmware edits unpushed.

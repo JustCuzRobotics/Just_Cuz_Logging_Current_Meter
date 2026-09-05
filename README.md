@@ -3,8 +3,10 @@
 A 150 A / 60 V inline power meter and datalogger for RC ESC test benches, a WM150-class
 meter with live logging, a graphing touchscreen, and thermistor plus ESC-signal channels.
 
-**Status: Rev A. Schematic and layout complete, fabrication package generated, boards on
-order.** Firmware not yet written.
+**Status: Rev A built, assembled and brought up (2026-08-25).** Display, capacitive touch,
+all four analog channels, backlight and the ESC output all work. Voltage and thermistor are
+calibrated. **Two known Rev A faults: the buttons are dead (footprint pad mapping) and
+`JP1` ships open.** See "Known open items". Bring-up firmware is in `firmware/`.
 
 ![Placement](placement.svg)
 
@@ -116,19 +118,37 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
 
 ## Known open items
 
-- **RV1 footprint.** Corrected from the wrong 3362 variant (pads in a row) to the real
-  3362P triangle, verified against the vendor EasyEDA model. **Not yet applied to the
-  board.** Running *Update Footprints from Library* moves all three pads 1.27 mm and
-  requires re-routing `T_NODE` and `T_POT_TOP`. See `DESIGN.md` §4.4.
-- **D1 / U1 courtyards overlap by 3.49 × 0.45 mm.** Checked: courtyard margin only, no pad,
-  body or silk inside it. KiCad will still flag it.
-- ~~**Two KiCad 10 format assumptions.**~~ **Resolved.** KiCad 10 opened the board,
-  accepted it and rewrote it as format `20260206`. Both assumptions in `DESIGN.md` §14
-  were correct: the stackup reads four copper layers, and there is no top-level `(nets …)`
-  index, so zone and via nets by name is the right form.
-- **Firmware.** Architecture is sketched in `DESIGN.md` §11; nothing is written. The known
-  risk to test first is whether the display module's microSD tri-states MISO cleanly. R13
-  is a 0 Ω placeholder in that path for exactly this reason.
+### Rev A hardware faults
+
+- **`JP1` ships open — bridge it or the display is dead.** It is the display's only supply.
+  Bridge pad 2 (`DISP_VCC`) to pad 1 (`+5V`). No backlight, no SPI and no I²C until you do,
+  which makes it look like a much bigger problem than it is. `DESIGN.md` §9.
+- **`J7` needs a TYPE A (same-side) FFC cable.** The one in the display's box is Type B and
+  reverses the pin order, putting 5 V on the module's `SD_CS` while `VCC` sits unpowered.
+  14 pin, 0.5 mm pitch, Type A, ≤100 mm. `DESIGN.md` §9.
+- **SW1/SW2 are dead — footprint pad mapping is wrong.** `SW_TS-1187A` was remapped
+  assuming internal pairs 1–3/2–4; they are 1–2/3–4, so both buttons short `BTN1` to `GND`
+  permanently. Rev B fix, plus a lift-two-legs bodge for Rev A. Calibration runs from
+  serial commands instead. `DESIGN.md` §9.
+- **RV1 footprint.** Corrected in the library to the real 3362P triangle but **not yet
+  applied to the board**. *Update Footprints from Library* moves all three pads 1.27 mm and
+  needs `T_NODE` and `T_POT_TOP` re-routed. `DESIGN.md` §4.4.
+- **D1 / U1 courtyards overlap by 3.49 × 0.45 mm.** Courtyard margin only — no pad, body or
+  silk inside it. KiCad will keep flagging it. Not a bug.
+
+### Firmware
+
+- **Bring-up diagnostic is complete** and lives in `firmware/display_bringup/`. It exercises
+  all 20 GPIO, reports pass/fail per subsystem with net names, and runs the calibration
+  routines.
+- **Current gain is the last uncalibrated channel.** Voltage, thermistor and the current
+  zero are done and baked in.
+- **The real firmware is not started.** Architecture and the measured sampling constraints
+  are in `DESIGN.md` §11.
+- ~~**microSD MISO tri-state risk.**~~ Inconclusive so far, and **not a blocker** — the
+  panel is driven write-only and works. With no card in the slot nothing drives MISO on
+  these modules, so `0xFF` is the expected reading. The §11 question only has meaning with
+  a card inserted.
 
 ## Sourcing note
 

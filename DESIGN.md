@@ -1,6 +1,7 @@
 # ESC Test Bench Mainboard — Design Document
 
-**Rev A — schematic complete, PCB not started.**
+**Rev A — built, assembled and brought up. Display, touch, all four analog channels working.**
+**Buttons dead (SW footprint fault, §9). Current gain not yet calibrated.**
 150 A / 60 V inline power meter and datalogger. A WM150-class meter with live logging,
 a graphing display, and thermistor + ESC-signal channels.
 
@@ -347,9 +348,28 @@ Worst-case source impedance is 50 kΩ (when R_ntc = R_pot), far too high for the
 SAR input on its own — **C7 = 100 nF at the pin is what makes this work**, by supplying
 the sampling charge locally.
 
-RV1 is wired as a rheostat (wiper tied to pin 3). `R10` is a 0 Ω placeholder: fit **91k**
-there and RV1 becomes a fine trim over 91–191 kΩ instead of setting the whole upper leg,
-which is considerably more stable and easier to set.
+RV1 is wired as a rheostat (wiper tied to pin 3). `R10` is a 0 Ω placeholder.
+
+> **Correction to the 91k recommendation.** This used to say *"fit 91k there and RV1
+> becomes a fine trim over 91–191 kΩ"*. That does not achieve what it claims. For the
+> ~100 kΩ target, 91k puts you at **9 % of pot rotation** — the opposite end stop from
+> where R10 = 0 leaves you (100 %). Neither is a fine trim.
+>
+> | R10 | Trim range | 100 kΩ sits at |
+> |---|---|---|
+> | 0 (as built) | 0–100 k | **100 %** — end stop |
+> | 91k (old advice) | 91–191 k | **9 %** — other end stop |
+> | **47k** | 47–147 k | **53 %** — centred |
+>
+> 47k also sits near the geometric mean of R_ntc across 0–100 °C (≈48 k), so it is
+> defensible on resolution grounds too. Note that for motor temperatures specifically
+> (25–100 °C, R_ntc 100 k → 7 k) the best-resolution R_pot is nearer **27 k**; the 100 kΩ
+> target maximises sensitivity at *room* temperature, which is probably not what a test
+> bench cares about. Decide the target before fitting anything.
+>
+> **As built and measured 2026-08-25: RV1 = 100.83 kΩ**, at the clockwise end stop. The
+> pot value is roughly 20× less critical than the NTC's own R25 tolerance — 100.70 k vs
+> 100.83 k moves the temperature by 0.03 °C.
 
 > ### RV1 footprint — was the wrong 3362 variant, now corrected
 >
@@ -418,6 +438,24 @@ calibration**, thereafter limited by LDO tempco (~100 ppm/°C) and resistor drif
 Ratiometric, so no reference error. Realistically ±2 °C after trimming RV1, limited by
 NTC tolerance and B-value spread.
 
+### Measured on the first board, 2026-08-25
+
+The predictions above held up. Recording the actuals, because they validate the model:
+
+| Term | Predicted | Measured |
+|---|---|---|
+| Voltage gain error, uncalibrated | ±2.2 %, LDO-dominated | **−1.74 %** |
+| Voltage after two-point calibration | ~±0.3 % | fit residual 0.000 V at both points |
+| ACS770 quiescent vs nominal | part tolerance | **+5.40 %** (ratio 0.105399 vs 0.1) |
+| Thermistor B | 3950 nominal | **3836.6** (−2.9 %) |
+| Thermistor R25 | 100 k nominal | **97 988 Ω** (−2.0 %) |
+| Zero-current reading after tare | ±2 A band | **−0.040 A** |
+
+One term the budget above misses: the voltage channel has a real **8.2 ADC count zero
+offset** (≈0.14 V), from ADC input leakage and D1's reverse leakage into the 10.5 kΩ node.
+It only appears with the input floating — a connected pack swamps it — but it is why §6.1
+now fits an offset as well as a gain.
+
 > **Consider 0.1 % resistors for R1, R2, R5, R8.** They cost about five cents more and
 > remove the ±1.1 % divider term before you calibrate anything.
 
@@ -425,18 +463,80 @@ NTC tolerance and B-value spread.
 
 ## 6. Calibration procedure
 
-1. **Zero / tare.** USB only, nothing in the current path. Hold **SW2**. Firmware averages
-   4096 samples and stores the offset. Repeat after any run that saw large current —
-   the ACS770 retains up to 400 mA of magnetic offset after a 150 A excursion.
-2. **Voltage gain.** Apply a known DC voltage (bench supply, verified with a good DMM) to
-   the input. Adjust `v_gain` until the reading matches. One point through the origin.
-3. **Current gain.** Pass a known current through the board — resistive load plus a clamp
-   meter, or a calibrated shunt. Adjust `i_gain`. Do this near the top of the range where
-   the percentage error of the reference matters least.
-4. **Temperature.** Ice bath (0 °C) or a reference probe. Trim RV1 until it agrees, or
-   measure the pot with a DMM and enter the value as `t_pot_ohms`.
+**Rewritten 2026-08-25 after actually doing it on hardware.** The previous version was
+written before anyone had a board and three of its four steps were wrong in practice.
 
-Store all four constants in flash (LittleFS, or a dedicated sector).
+All of it now runs from serial commands in `firmware/display_bringup/`, not from the
+buttons — **SW1 and SW2 are dead on Rev A** (§9). Constants are printed to paste back into
+the top of the sketch, and the current values are recorded there.
+
+### 6.1 Voltage — `v`, TWO points, not one
+
+> **Correction.** This used to say *"one point through the origin"*. That is wrong for
+> this board. There is a real **8.2 ADC count zero offset** (≈ 0.14 V), so a fit through
+> the origin reads **+1.12 % high at 10 V** and worse below it. Fit gain AND offset.
+
+Feed the supply into the INPUT connector (J1/J2), low current limit, no load. Use two
+widely spaced points and read the voltage from a meter, not the supply's display.
+
+Measured on the first board: gain **−1.74 %** from nominal, which is the 3V3 LDO tolerance
+landing on a GND-referenced channel exactly as §4.3 and §5 predict.
+
+> **Live high voltage.** The bus copper is deliberately soldermask-free so bars can be
+> soldered on. At 57 V that is a bare live conductor. §4.3 also warns that R3 sits ~1 mm
+> from the LOAD+ pour — a slipped probe there puts 60 V on the ADC node.
+
+### 6.2 Current — `i`, tare then gain
+
+Model: `I = (ratio − quiescent) / sensitivity`, where `ratio = (ADC_I/ADC_5V)·(G2/G1)`.
+Both VCC and VREF cancel (§4.2), so the two unknowns map onto the two steps.
+
+1. **Tare at 0 A**, nothing in the current path. Measured quiescent on the first board is
+   **0.105399**, +5.40 % from the nominal 0.1 — ordinary part tolerance. Re-tare each
+   session: the ACS770 keeps up to 400 mA of magnetic offset after a large excursion.
+2. **Gain at the highest current you can source.** This matters more than it looks. §5's
+   nonlinearity is **±1.5 A of FULL SCALE, fixed at any reading**, so as a fraction of the
+   calibration current it is the gain uncertainty you inherit:
+
+   | Calibration current | Gain uncertainty |
+   |---|---|
+   | 4 A | ±37 % |
+   | 10 A | ±15 % |
+   | 30 A | ±5 % |
+   | 150 A | ±1 % |
+
+   Use a low current for a **check** point, never for the gain fit.
+
+### 6.3 Thermistor — `n`, two points, and NOT an ice bath
+
+> **Correction.** This used to say *"ice bath (0 °C)"*. **Do not.** Bare thermistor leads
+> in water put a few hundred kΩ across the part — measured at roughly **340 kΩ**. That is
+> a **49 % error at 0 °C and only 2 % at 100 °C**: a temperature-dependent error, which no
+> two-parameter fit can absorb. Three ice-bath attempts produced B values of 2922, 3090
+> and 3482 and R25 values of 57 k, 57 k and 87 k — all physically impossible for a part
+> the DMM reads at 111 kΩ at 22 °C.
+
+**Use room temperature and boiling instead.** 77 °C of spread settles B to 0.18 % against
+0.13 % for a 0–99 °C pair. The cold point was never necessary.
+
+Take each parameter from the measurement that gets it best:
+
+- **B** from a wide span with **both ends verified** by a thermometer. Two independent
+  runs gave 3834.9 and 3836.6.
+- **R25** from one accurate absolute point: the thermistor **dry, in air**, against a good
+  room reference. Every wet measurement is shunted. R25 moves ~4.5 % per °C of error in
+  that reading, so read the reference meter — do not estimate it.
+
+Fitted on the first board: **B = 3836.6, R25 = 97 988 Ω**.
+
+If a genuine ice slurry ever happens — mostly crushed ice, minimal water, stirred, 30 s to
+settle — this fit predicts **308 kΩ at 0 °C**. Use it as a *check*, never as a fit input.
+
+### 6.4 Sanity check every fit
+
+A fit returning a physically implausible part means the **data** is wrong, not the part.
+The sketch now rejects B outside ±15 % and R25 outside ±25 % of nominal rather than
+printing them as if they were usable.
 
 ---
 
@@ -626,6 +726,58 @@ carries no net — silently, with no error.
 The ACS770 remap matters most: those 32 perimeter vias are the datasheet's recommended
 current-handling stitching. Left as imported they would have been unconnected copper.
 
+### Assembly gotchas found during Rev A bring-up (2026-08-25)
+
+Three things cost an evening each. All are invisible from the schematic.
+
+#### JP1 SHIPS OPEN — the display has no power until you bridge it
+
+`JP1` is a 3-pad solder jumper and it is the display's **only** supply. Pad 2 is
+`DISP_VCC` → FPC pin 1; pad 1 is `+5V`, pad 3 is `+3V3`. **Bare copper from fab means the
+module is dead**, and the symptom is total: no backlight, no SPI, no I²C, because all
+three depend on the module being powered.
+
+**Bridge pad 2 to pad 1 (+5 V).** The module spec calls for 5 V and its own reference
+wiring runs VCC = 5 V against 3.3 V logic, which is exactly this case — the module has
+onboard level conversion. 3.3 V works but the vendor notes the backlight goes dim.
+
+Verify: pad 2 ↔ pad 1 continuity, pad 2 ↔ pad 3 **open** (bridging all three shorts +5 V
+to +3V3), and ~5 V on pad 2 when powered. A blob sitting on soldermask between pads looks
+identical to a bridge and conducts nothing.
+
+#### J7 REQUIRES A **TYPE A** (same-side) FFC CABLE
+
+**The cable in the display's box is Type B (opposite-side) and gives a REVERSED pin
+order.** Confirmed by continuity and then by a working display once swapped.
+
+With a Type B cable, `J7` pin N lands on module pin 15−N: `DISP_VCC` arrives at the
+module's `SD_CS` while `VCC` sits unpowered, and 5 V is driven into a logic pin. The
+module survived it, but nothing works and every symptom points at the wrong place.
+
+Order: **14 pin, 0.5 mm pitch, Type A (same side), ≤100 mm.** Sellers also call it
+"forward" or "same side"; the `AWM 20624 80C 60V VW-1` marking is a UL wire style printed
+on both types and is not a differentiator.
+
+The netlist and footprint are correct — `J7` pin N carries the same signal as module pin
+N, and pad 1 is at the normal end. This is purely a cable-type requirement.
+
+#### SW1 / SW2 FOOTPRINT PAD MAPPING IS WRONG — both buttons are dead
+
+`SW_TS-1187A_5.1x5.1mm` was remapped `1,3`→`1`, `2,4`→`2`, which assumes the switch's
+internally-connected pairs are 1–3 and 2–4. **They are 1–2 and 3–4.** The remap therefore
+ties each net to one pin of *each* internal pair, shorting `BTN1` to `GND` through the
+switch's own permanent link.
+
+Confirmed on hardware: **all four pads of both switches read short to GND**, and both pins
+sit LOW with the internal pull-ups enabled.
+
+- **Rev B:** correct the remap to the real internal pairing.
+- **Rev A bodge:** lift two legs on each switch so only one leg of each internal pair
+  remains, on opposite nets — keep 1 and 4, lift 2 and 3. Confirm the pairing on a loose
+  switch first.
+- **Consequence:** `SW2` is the ZERO/TARE button §6 depends on, so calibration runs from
+  serial commands instead. Firmware must not assume the buttons exist.
+
 **Connector gender is not interchangeable.** J1/J2 are male (the input mates the
 battery's female half) and J3/J4 female (the output mates the ESC's male half). M and F
 have mirrored pads — swapping them reverses polarity.
@@ -773,6 +925,99 @@ A and W. TFT_eSPI with sprites is lighter and simpler at 480×320; use LVGL only
 want a real touch UI.
 
 **Buttons.** SW1 cycles display views. SW2 performs the zero/tare of §6.
+
+### Sampling architecture — measured, not assumed
+
+**Added 2026-08-25.** This supersedes the "decimate to ~2 kHz" line above, which was
+written before anyone measured what the front end actually passes.
+
+#### Channel bandwidth — the binding constraint
+
+Every channel is analog-limited long before the ADC is. These are the RC corners formed by
+each divider's source impedance and its capacitor:
+
+| Channel | Source Z | Cap | **−3 dB** |
+|---|---|---|---|
+| `I_SENSE` | R1∥R2 = 1.59 k | C4 10 nF | **10.0 kHz** |
+| `V5_SENSE` | R5∥R8 = 5.0 k | C6 100 nF | **318 Hz** |
+| `V_PACK` | 9.52 k | C5 100 nF | **167 Hz** |
+| `T_SENSE` | ~50 k worst case | C7 100 nF | **32 Hz** |
+
+Three consequences that are not obvious from the schematic:
+
+1. **Only `I_SENSE` benefits from fast sampling.** Sampling `V_PACK` above ~2 kHz gains
+   nothing — C5 will not let the signal change faster. 100 Hz–1 kHz is ample for all three
+   slow channels.
+2. **The §4.2 ratiometric correction is only valid below ~318 Hz**, because that is where
+   `V5_SENSE` runs out of bandwidth while `I_SENSE` keeps going to 10 kHz. Supply ripple
+   faster than that modulates the sensor output and cannot be cancelled. **This is why the
+   backlight must be driven solid, never PWM'd** — `analogWrite`'s default ~1 kHz lands
+   squarely in that gap. See §14.
+3. **`V_PACK` is 60× slower than `I_SENSE`.** The voltage at a peak-current instant is
+   smoothed over ~6 ms. Fine for LiPo sag, which develops over tens to hundreds of ms —
+   arguably correct, since you want sagged pack voltage rather than switching ripple — but
+   it will understate a sub-millisecond event.
+
+#### The split: oversample, decimate, peak-track on the raw stream
+
+```
+ADC free-running, DMA, I_SENSE at ~250 kHz, slow channels interleaved at ~1 kHz
+        |
+        +--> peak tracker    sees EVERY raw sample -> true peaks
+        |
+        +--> block accumulator, 2 ms
+                 mean -> the 500 Hz logged value
+                 max  -> that block's peak, with coincident V
+```
+
+**Do not sample at 500 Hz.** It aliases anything above 250 Hz and peaks become luck.
+500 Hz as a *decimation of a fast stream* is right, and the mean-over-block is itself a
+boxcar filter with its first null at 500 Hz — free anti-aliasing.
+
+**250 kHz on `I_SENSE` is the sweet spot.** Worst-case peak under-read of a full-amplitude
+10 kHz sinusoid: 4.71 A at 125 kHz, 2.65 A at 167 kHz, **1.18 A at 250 kHz**, 0.30 A at
+500 kHz. The sensor floor is ±1.5 A, so past ~250 kHz you are chasing precision the
+ACS770 cannot deliver. Peak-track in raw ADC counts and convert once per block.
+
+#### Peak power coincides with peak current
+
+P = I·(V_oc − I·R_int), so dP/dI = 0 at I = V_oc/(2·R_int) — **1260 A** for a 6S pack at
+10 mΩ, 630 A at 20 mΩ. Within 0–150 A power rises monotonically with current, so latching
+V at the peak-I instant is correct, not an approximation.
+
+#### What "true peak" is worth
+
+Nonlinearity is **±1.5 A fixed at any reading**, noise ±0.225 A. A captured peak is
+meaningful to about ±1.5 A no matter how fast you sample. Faster sampling buys the
+*timing* of short events, not their amplitude.
+
+500 Hz CSV is ~29 kB/s — comfortable for SdFat with a pre-allocated contiguous file, and
+5× what the 100 Hz figure above assumes.
+
+#### Two cores, and why the display does not slow logging
+
+Core 1 samples, core 0 draws. They share only the ADC — which core 0 must never touch
+while sampling runs — and negligible memory bandwidth. 250 kHz sampling, 500 Hz logging
+and a 60 fps display coexist. Demonstrated in `display_bringup`, where moving the graph
+sampler to core 1 took it from ~25 Hz to a solid 77.6 Hz.
+
+#### Display refresh ceiling
+
+Full-frame redraw is bandwidth-bound: 300 kB per frame, so 4.9 fps at 12 MHz and 25 fps
+even at 62.5 MHz. **Partial updates are limited by per-call overhead instead**, and that is
+where the speed is:
+
+| Approach | Calls/frame | Ceiling |
+|---|---|---|
+| Per-pixel/segment ink-only | ~1550 | 43 fps |
+| One window-write per column | ~390 | 172 fps |
+| **ST7796 hardware scroll + one new column** | ~2 | effectively free |
+
+The ST7796 has a hardware vertical scroll (`0x33` VSCRDEF / `0x37` VSCRSADD), and at
+rotation 1 the panel's **native vertical axis is the graph's time axis** — so a scrolling
+plot becomes one register write per frame, with the fixed top/bottom areas landing exactly
+on the left/right label margins. Arduino_GFX does not expose those commands; they would go
+through the databus directly. That is the route to a 60 fps standalone camera mode.
 
 ### Known risk to test early
 The microSD on these display modules shares MISO with the LCD. Some cheap modules do not
@@ -1002,6 +1247,32 @@ analog channels are where it landed:
 | `T_POT_TOP` | 19.5 mm | **6.0 mm** |
 | `I_SENSE` | 66.0 mm | **58.9 mm** |
 | `VPACK_TAP` | 28.4 mm | 59.9 mm — deliberate, see above |
+
+### Display and touch constants — determined on hardware 2026-08-25
+
+| Constant | Value | How it was found |
+|---|---|---|
+| `LCD_ROTATION` | **1** | the intended viewing orientation |
+| `TOUCH_INVERT_X` | **0** | |
+| `TOUCH_INVERT_Y` | **0** | |
+| SPI clock | 12 MHz for bring-up | panel takes 40–62.5 MHz |
+| Backlight | **solid HIGH, never PWM** | see §11 — ~1 kHz PWM sits in the gap where the ratiometric correction cannot cancel it |
+
+> **The ground truth for touch mapping is the crosshair landing under the finger**, not a
+> verbal description of where a touch was. Both the touch read and the drawing land in the
+> same frame, so if it tracks, it is right. Reasoning from "I touched the top-left" once
+> produced a confidently mirrored mapping, because the description was in the viewer's
+> frame while the rendered image sits 180° from it.
+>
+> Note that rotation 3 with both inverts at 0 is the *same touch maths* as rotation 1 with
+> both at 1 — but rotation 3 also rotates the **display** 180°. That is why the inverts
+> exist separately from `LCD_ROTATION`, and why they must be re-checked if it changes.
+
+The FT6336U also needs configuring for responsiveness. Register `0x86` (ID_G_CTRL) allows
+monitor mode **by default**, and `0x87` drops into it after **30 seconds** idle, where the
+panel scans slowly and the first touch back is late or lost. Write `0x86 = 0x00` to forbid
+it and `0x88 = 0x04` for the fastest scan period. `CTP_INT` on GP13 works as an interrupt;
+the ISR must only set a flag, since an I²C transaction inside an ISR would deadlock.
 
 ### Passive designators are on Dwgs.User
 

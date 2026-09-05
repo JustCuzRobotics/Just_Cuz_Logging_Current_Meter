@@ -1,7 +1,7 @@
 /* ============================================================================
  * RC Logging Current Meter - Rev A board bring-up diagnostic
  * ----------------------------------------------------------------------------
- *   VERSION 0.8          LAST UPDATED 2026-08-25 13:26 EDT
+ *   VERSION 2.1          LAST UPDATED 2026-08-25 22:40 EDT
  *
  *   The banner printed at boot repeats this stamp AND the compiler's own build
  *   time, so you can confirm from the serial log that the board is running the
@@ -9,6 +9,79 @@
  *   you have the wrong copy; if the BUILT time is stale, the IDE did not
  *   recompile.
  *
+ *   2.1  2026-08-25  Thermistor refined: B=3836.6 from the run with BOTH
+ *                    ends verified, R25=97988 still anchored on the dry
+ *                    FNIRSI point. Taking each parameter from the run that
+ *                    measured it best removes a systematic ~0.7 C warm bias.
+ *   2.0  2026-08-25  Thermistor FITTED: B=3893.8, R25=97804, from 22.1 C
+ *                    and 99.0 C. The ice bath was abandoned - three tries
+ *                    all produced resistances implying ~16 C, and 77 C of
+ *                    spread settles B just as well. All four analog
+ *                    channels now have measured constants.
+ *   1.9  2026-08-25  NTC fit now rejects physically implausible results
+ *                    (+/-15% on B, +/-25% on R25) instead of printing them
+ *                    as if they were usable, and says what to check. A fit
+ *                    returning R25=57k for a part the DMM reads at 111k
+ *                    at 22 C is bad DATA, not a bad part. Also warns to
+ *                    seal the probe - bare leads in water shunt the
+ *                    thermistor and break the cold point specifically.
+ *   1.8  2026-08-25  FIXED: v1.7 baked the NOMINAL quiescent 0.1 rather than
+ *                    this board's measured 0.105399, so the board read a
+ *                    phantom 1.01 A with nothing connected. Current zero and
+ *                    gain are now tracked separately, because the zero is
+ *                    calibrated and the gain is not - reporting both as one
+ *                    flag was hiding which number to trust.
+ *   1.7  2026-08-25  Calibration constants BAKED IN rather than living in
+ *                    RAM: V_GAIN_CAL / V_OFFSET_CAL from the 9.99 V and
+ *                    57.03 V fit now survive a reflash. New 'c' command and
+ *                    a boot line show what is stored and which channels are
+ *                    genuinely calibrated. Current still nominal - waiting
+ *                    on the numbers from 'i'.
+ *   1.6  2026-08-25  V_PACK check reworded - it is a safety interlock, and
+ *                    reporting FAIL during a deliberate voltage calibration
+ *                    read like a board fault.
+ *   1.5  2026-08-25  Backlight is now driven SOLID HIGH, never PWM'd, and
+ *                    SW1 no longer dims it. PWM at ~1 kHz sits in the gap
+ *                    between I_SENSE's 10 kHz and V5_SENSE's 318 Hz, where
+ *                    the 4.2 ratiometric correction cannot cancel it - it
+ *                    was injecting uncorrectable current noise.
+ *   1.4  2026-08-25  Graph sampling moved to CORE 1 (DESIGN.md section 11's
+ *                    own split). v1.3 managed only ~25 Hz because a 31 ms
+ *                    draw blocked the sampler and missed samples were
+ *                    dropped, so 388 columns spanned ~15 s on an axis
+ *                    labelled 5 s. Interval is now microseconds with
+ *                    catch-up, and the ACHIEVED rate is measured and shown
+ *                    on the panel rather than assumed.
+ *   1.3  2026-08-25  Live V/I graph, command 'g': 5 s scrolling window,
+ *                    volts blue on the left axis, amps red on the right,
+ *                    2 px traces, autoscaling. Touch inverts reverted to 0
+ *                    (the crosshair under the finger is the ground truth,
+ *                    not a verbal description). Crosshair enlarged to a
+ *                    ring plus long arms, and 'x' now clears the screen so
+ *                    erasing with black stops punching holes in the test
+ *                    pattern.
+ *   1.2  2026-08-25  MISO test downgraded from FAIL to INFO when it reads
+ *                    0xFF. With no SD card in the slot nothing drives that
+ *                    pin on these modules, so 0xFF is the expected result
+ *                    on a healthy board with a working panel. S11 can only
+ *                    be answered with a card inserted.
+ *   1.1  2026-08-25  Touch responsiveness. Root cause was FT6336U register
+ *                    0x86 - monitor mode is ALLOWED by default and 0x87
+ *                    drops into it after 30 s idle. Now forbidden, scan
+ *                    period set fastest, I2C raised to 400 kHz, and CTP_INT
+ *                    (GP13) drives an ISR flag so reads are event-driven
+ *                    with a 50 ms timed fallback. Reports how each sample
+ *                    was triggered so a dead CTP_INT is visible.
+ *   1.0  2026-08-25  Touch mapping SOLVED on hardware: TOUCH_INVERT_X and
+ *                    TOUCH_INVERT_Y both 1 at LCD_ROTATION 1. Display,
+ *                    touch, all four ADC channels and the thermistor are
+ *                    now all working. Buttons remain dead (footprint bug).
+ *   0.9  2026-08-25  FIXED: the Enter that starts a command was being read
+ *                    as a second keypress one iteration later. That killed
+ *                    the 'x' and 'A' streams instantly, and made 'n'/'v'/'i'
+ *                    abort on an empty prompt. CR/LF is now ignored as a
+ *                    keypress and drained after each command. 'x' also runs
+ *                    the touch scan itself if it has not run yet.
  *   0.8  2026-08-25  Pack-voltage calibration ('v', two-point linear with
  *                    offset) and current calibration ('i', tare then gain,
  *                    plus an optional check point). Both applied live for
@@ -98,8 +171,8 @@ Adafruit_NeoPixel px(1, 16, NEO_GRB + NEO_KHZ800);
  * FW_UPDATED is set by hand when this file is edited.  BUILT comes from the
  * compiler, so a stale BUILT time means the IDE reused a cached object file
  * and the board is NOT running what you just changed.                        */
-#define FW_VERSION  "0.8"
-#define FW_UPDATED  "2026-08-25 13:26 EDT"
+#define FW_VERSION  "2.1"
+#define FW_UPDATED  "2026-08-25 22:40 EDT"
 #define FW_BUILT    __DATE__ " " __TIME__
 
 /* ---------------------------------------------------------------- pin map */
@@ -111,6 +184,18 @@ Adafruit_NeoPixel px(1, 16, NEO_GRB + NEO_KHZ800);
 #define PIN_LCD_CS    5
 #define PIN_LCD_RS    6
 #define PIN_LCD_RST   7
+/* Backlight. DRIVEN SOLID HIGH in normal operation - never PWM'd.
+ *
+ * Not a brightness preference, an accuracy one. I_SENSE passes to 10 kHz (C4)
+ * but V5_SENSE only to 318 Hz (C6), so DESIGN.md 4.2's ratiometric correction
+ * is only valid below ~318 Hz. analogWrite's default ~1 kHz PWM lands inside
+ * that gap: it modulates VBUS, the sensor output follows it because the part
+ * is ratiometric and fast, and V5_SENSE cannot see it to cancel it. The result
+ * is current noise that no amount of calibration removes.
+ *
+ * A CONSTANT load is the ideal case - a DC shift in VBUS cancels exactly,
+ * which is what 4.2 exists to do. 100% costs ~100 mA of a 500 mA USB budget
+ * (161 mA total for the board), and gives the brightest panel for filming.  */
 #define PIN_LCD_LED   8
 #define PIN_SD_CS     9
 #define PIN_CTP_SDA  10
@@ -135,8 +220,31 @@ Adafruit_NeoPixel px(1, 16, NEO_GRB + NEO_KHZ800);
 #define ACS_SENS      0.005332f   /* (VIOUT/VCC) per amp                     */
 #define ACS_QUIESCENT     0.1f    /* VIOUT/VCC at 0 A                        */
 #define VPACK_RATIO      21.0f    /* (100k+100k+10k)/10k                     */
-#define NTC_B            3950.0f
-#define NTC_R25        100000.0f
+/* FITTED 2026-08-25. Two parameters, taken from the two runs that measured
+ * each one best, rather than from a single pair of points.
+ *
+ *   B   from 21.1 C + 100.0 C, both verified with a meat thermometer.
+ *       Corroborated independently by a 22.1 C + 97 C run at B=3834.9.
+ *       Two runs agreeing to 0.05% is why this value is trusted.
+ *
+ *   R25 anchored on 111.190 k at 22.1 C - FNIRSI 2C53T, in air, DRY, against
+ *       a reference meter. Every wet measurement is shunted by a few hundred
+ *       kohm through the leads, so the dry point is the only clean one.
+ *       Agrees with the 97.99 k from the 22.1/97 run to 0.2%.
+ *
+ * The 21.1 C + 100 C run's own R25 came out 94.9 k, about 3% low, because a
+ * meat thermometer is built for 100 C and is worth roughly a degree at room
+ * temperature - and R25 moves ~4.5% per degree there. Hence splitting the
+ * sources: its B is excellent, its R25 is not.
+ *
+ * ABANDONED: the ice bath. Three attempts produced resistances implying
+ * ~16 C. Wet leads shunt the thermistor by ~340 k, which is a 49% error at
+ * 0 C and only 2% at 100 C - a temperature-dependent error that no 2-parameter
+ * fit can absorb, which is exactly why every ice-bath fit disagreed with the
+ * last. This fit PREDICTS 308 k at 0 C; measure that as a CHECK if a real ice
+ * slurry ever happens, never as an input.                                   */
+#define NTC_B            3836.6f
+#define NTC_R25         97988.0f
 #define RV1_OHMS       100830.0f  /* MEASURED 2026-08-25 with a DMM across the
                                    * pot legs, power off, NTC unplugged, on
                                    * an FNIRSI 2C53T. A measured circuit
@@ -145,6 +253,47 @@ Adafruit_NeoPixel px(1, 16, NEO_GRB + NEO_KHZ800);
                                    * the temperature by 0.03 C. The NTC's own
                                    * R25 tolerance dominates by 20x.
                                    * Re-measure if RV1 is ever turned.        */
+
+/* =============================== STORED CALIBRATION ========================
+ * Measured on THIS board. Baked in so they survive a reflash - without this
+ * the 'v' / 'i' fits live in RAM only and are lost on every upload.
+ *
+ * Re-run the fit and paste new values here after ANY change to a divider,
+ * the LDO, or the sensor. Set the _VALID flag to 1 when a channel has been
+ * genuinely calibrated, so the report can tell you which numbers to trust.
+ *
+ * VOLTAGE - fitted 2026-08-25, two points at 9.990 V and 57.030 V
+ *   gain is -1.74% from nominal, which is the 3V3 LDO tolerance landing on a
+ *   GND-referenced channel exactly as DESIGN.md 4.3 / 5 predict.
+ *   The offset is REAL: 8.2 ADC counts. A one-point fit through the origin,
+ *   which DESIGN.md 6 step 2 currently specifies, would read +1.12% high at
+ *   10 V and worse below that.                                             */
+#define V_GAIN_CAL       0.01662778f  /* V per ADC count                     */
+#define V_OFFSET_CAL    -0.13632f     /* V                                   */
+#define V_CAL_VALID      1
+
+/* CURRENT - ZERO and GAIN are separate, because they are separately valid.
+ *
+ * ZERO: measured 2026-08-25 on this board, ratio 0.105399 at zero current.
+ * That is +5.40% from the nominal 0.1 - ordinary ACS770 quiescent-output
+ * tolerance plus divider tolerance. v1.7 shipped the NOMINAL 0.1 by mistake,
+ * which made the board read a phantom 1.01 A with nothing connected.
+ *
+ * Still re-tare at the start of a session: DESIGN.md 6 step 1 notes the
+ * ACS770 retains up to 400 mA of magnetic offset after a large excursion,
+ * and this stored value is a starting point, not a substitute.
+ *
+ * GAIN: still nominal. Record I_CAL_CURRENT when you fit it - the +/-1.5 A
+ * nonlinearity floor is +/-5% of a 30 A fit but +/-37% of a 4 A one (5).   */
+#define I_QUIESCENT_CAL  0.105399f    /* ratio at 0 A - MEASURED            */
+#define I_ZERO_VALID     1
+#define I_SENS_CAL       0.00533200f  /* ratio per amp - NOMINAL            */
+#define I_GAIN_VALID     0
+#define I_CAL_CURRENT    0.0f         /* amps the gain was fitted at        */
+
+/* THERMISTOR - FITTED, see NTC_B / NTC_R25 above. A room-temperature point
+ * paired with boiling gives 77 C of spread, which settles B perfectly well;
+ * what a room-temperature point CANNOT do is settle B on its own.          */
 
 #define ADC_AVG            64     /* RP2040 ADC has DNL artefacts near
                                    * 512/1536/2560/3584 - averaging fixes it
@@ -158,8 +307,45 @@ Adafruit_NeoPixel px(1, 16, NEO_GRB + NEO_KHZ800);
 
 #define TOUCH_NATIVE_W  320
 #define TOUCH_NATIVE_H  480
+/* DETERMINED ON HARDWARE 2026-08-25. Both 0 is correct at LCD_ROTATION = 1.
+ *
+ * I briefly set both to 1 after reasoning from a verbal description of where
+ * the touches were ("top half", "top left corner"), and that was wrong - it
+ * mirrored the crosshair. The description was in the VIEWER's frame; the
+ * rendered image sits 180 deg from that, so the mapping was already right.
+ *
+ * THE GROUND TRUTH IS THE CROSSHAIR UNDER THE FINGER, nothing else. Both the
+ * touch and the drawing land in the same frame, so if it tracks, it is right.
+ * Re-check these two if LCD_ROTATION is ever changed.                       */
 #define TOUCH_INVERT_X    0
 #define TOUCH_INVERT_Y    0
+
+/* ------------------------------------------------------------ live V/I graph
+ * A 5 second window scrolling right to left: oldest at the left edge, newest
+ * at the right. Voltage in blue against the LEFT axis, current in red against
+ * the RIGHT axis, both on the same time base.
+ *
+ * The whole plot shifts every frame, so a naive redraw would mean repainting
+ * 388x262 px = 203 kB per frame - about 7 fps at 12 MHz, unusably choppy.
+ * Instead the renderer remembers the exact pixel span it inked in each column
+ * last frame and repaints only that, which is a few hundred pixels per frame
+ * rather than a hundred thousand.                                           */
+#define GR_X0        46
+#define GR_X1       434
+#define GR_Y0        30
+#define GR_Y1       292
+#define GR_W  (GR_X1 - GR_X0)          /* 388 columns                        */
+#define GR_H  (GR_Y1 - GR_Y0)          /* 262 rows                           */
+#define GR_SECONDS  5.0f
+/* MICROseconds, not milliseconds. As ms this truncated 12.887 -> 12 and the
+ * window came out 4.66 s wide on an axis labelled 5 s.                      */
+#define GR_SAMPLE_US  (uint32_t)(GR_SECONDS * 1000000.0f / GR_W)  /* 12886 us */
+#define GR_FRAME_MS   40               /* redraw cap, 25 fps                 */
+#define GR_GRIDS      5                /* horizontal gridlines incl. both ends */
+
+#define C_VOLT   0x3BDF                /* bright blue, readable on black     */
+#define C_AMP    0xF800                /* red                                */
+#define C_GRID   0x2945                /* dark grey                          */
 
 /* ------------------------------------------------------------ RGB565 colours
  * Local on purpose: Arduino_GFX renamed bare BLACK/WHITE to RGB565_BLACK etc,
@@ -183,6 +369,18 @@ Adafruit_NeoPixel px(1, 16, NEO_GRB + NEO_KHZ800);
 #define FT_REG_P1_XL        0x04
 #define FT_REG_P1_YH        0x05
 #define FT_REG_P1_YL        0x06
+#define FT_REG_THGROUP      0x80   /* touch threshold / 16                    */
+#define FT_REG_CTRL         0x86   /* monitor-mode ENABLE. 0x01 = allowed (the
+                                    * factory default), 0x00 = forbidden.
+                                    * THE DEFAULT IS THE PROBLEM: with 0x87 the
+                                    * chip drops to a slow scan when idle.    */
+#define FT_REG_TIMEENTERMON 0x87   /* idle SECONDS before monitor mode, dflt 30 */
+#define FT_REG_PERIODACTIVE 0x88   /* active scan period 0x04..0x14, dflt 0x08,
+                                    * LOWER = faster reporting                */
+#define FT_REG_PERIODMON    0x89
+#define FT_REG_INTMODE      0xA4   /* 0x01 lengthens the INT low time while
+                                    * reporting - what level polling and an
+                                    * edge ISR both want                      */
 #define FT_REG_CIPHER_MID   0x9F   /* expect 0x26 */
 #define FT_REG_CIPHER_LOW   0xA0   /* expect 0x01 = FT6336G */
 #define FT_REG_CIPHER_HIGH  0xA3   /* expect 0x64 */
@@ -199,16 +397,24 @@ Arduino_GFX *gfx = new Arduino_ST7796(
 bool gDisplayAttempted = false;
 bool gTouchPresent     = false;
 
+/* Touch interrupt. The ISR does NOTHING but set a flag - an I2C transaction
+ * inside an ISR would deadlock. The actual register read happens in loop(). */
+volatile bool gTouchIrq = false;
+static void ctpIsr() { gTouchIrq = true; }
+uint32_t gIrqReads = 0, gPollReads = 0;   /* how each sample was triggered */
+bool gIrqAttached = false;
+
 /* ------------------------------------------------- runtime calibration state
  * Nominal until 'v' / 'i' fit them. These are RAM only - the sketch prints the
  * constants for you to paste back in. DESIGN.md section 6 wants them in flash;
  * that belongs in the real firmware, not in a diagnostic.                    */
-float gVGain      = ADC_VREF / ADC_MAX * VPACK_RATIO;  /* volts per count */
-float gVOffset    = 0.0f;                              /* volts           */
-float gIQuiescent = ACS_QUIESCENT;                     /* ratio at 0 A    */
-float gISens      = ACS_SENS;                          /* ratio per amp   */
-bool  gVCal = false, gICal = false;
-float gICalCurrent = 0.0f;   /* what current the gain was fitted at */
+float gVGain      = V_GAIN_CAL;
+float gVOffset    = V_OFFSET_CAL;
+float gIQuiescent = I_QUIESCENT_CAL;
+float gISens      = I_SENS_CAL;
+bool  gVCal = (V_CAL_VALID != 0);
+bool  gIZero = (I_ZERO_VALID != 0), gICal = (I_GAIN_VALID != 0);
+float gICalCurrent = I_CAL_CURRENT;
 
 static float packVolts(uint16_t raw) { return gVGain * (float)raw + gVOffset; }
 
@@ -265,6 +471,21 @@ static void info(const char *what, const char *detail) {
 }
 static void hex2(uint8_t v) { if (v < 0x10) Serial.print('0'); Serial.print(v, HEX); }
 
+/* Swallow the CR/LF that the Serial Monitor appends to a command character.
+ * Without this, the line ending arrives as a second "keypress" one iteration
+ * later - which instantly cancelled any stream you had just started, and made
+ * every interactive prompt read an empty line and abort. */
+static void drainLineEnd() {
+  uint32_t t0 = millis();
+  while (millis() - t0 < 30) {
+    if (!Serial.available()) continue;
+    int p = Serial.peek();
+    if (p != '\r' && p != '\n') return;
+    Serial.read();
+    t0 = millis();
+  }
+}
+
 /* ==========================================================================
  * ADC
  * ========================================================================*/
@@ -300,9 +521,12 @@ static const AdcCheck ADC_CHECKS[] = {
   { "GP28 T_SENSE ", PIN_T_SENSE,   200, 4095,
     "+3V3, R10, RV1, R9, C7 - see the Thermistor line below for open vs connected",
     "reads ~0: R10/RV1 open, or T_NODE shorted to ground" },
+  /* This one is a SAFETY INTERLOCK, not a health check: it fails whenever pack
+   * voltage is present, which is correct for bench work and expected during a
+   * voltage calibration. Read the Pack voltage line below for the real value. */
   { "GP27 V_PACK  ", PIN_V_PACK,      0,   60,
     "nothing on the 60 V input, as required for bench work (expect ~0)",
-    "NONZERO MEANS PACK VOLTAGE IS PRESENT - disconnect it before continuing" },
+    "PACK VOLTAGE PRESENT. Intended if you are running 'v' - otherwise disconnect it" },
 };
 
 static void adcReport(bool verbose) {
@@ -353,7 +577,9 @@ static void adcReport(bool verbose) {
   if (raw[0] > 100) {
     float amps = ampsFrom(raw[1], raw[0]);
     Serial.print(F("\n  RATIOMETRIC CURRENT (DESIGN.md 4.2)"));
-    Serial.println(gICal ? F("   [CALIBRATED]") : F("   [nominal - run 'i']"));
+    if (gICal)       Serial.println(F("   [ZERO + GAIN calibrated]"));
+    else if (gIZero) Serial.println(F("   [ZERO calibrated, GAIN nominal - run 'i']"));
+    else             Serial.println(F("   [nominal - run 'i']"));
     Serial.print(F("    ratio = ")); Serial.print(iRatio(raw[1], raw[0]), 6);
     Serial.print(F("    computed current = ")); Serial.print(amps, 3); Serial.println(F(" A"));
     if (fabsf(amps) < 2.0f)
@@ -366,6 +592,201 @@ static void adcReport(bool verbose) {
   } else {
     fail("ratiometric check", "skipped - V5_SENSE too low to divide by");
   }
+}
+
+/* ==========================================================================
+ * LIVE VOLTAGE / CURRENT GRAPH
+ * ========================================================================*/
+float   grV[GR_W], grI[GR_W];          /* ring buffer of samples            */
+int16_t grVy0[GR_W], grVy1[GR_W];      /* pixel span inked last frame, volts */
+int16_t grIy0[GR_W], grIy1[GR_W];      /* ditto, amps                        */
+volatile uint16_t grHead = 0;          /* index of the NEWEST sample         */
+volatile bool     grRunning = false;   /* core 1 samples only while this is set */
+volatile uint32_t grSampCount = 0;     /* for the achieved-rate readout      */
+float   grAchievedHz = 0.0f;
+float   grVMax = 10.0f, grAMax = 5.0f;
+uint32_t grLastSample = 0, grLastFrame = 0, grShrinkOk = 0;
+
+static const float GR_VSTEPS[] = {5, 10, 20, 30, 40, 60, 70};
+static const float GR_ASTEPS[] = {2, 5, 10, 25, 50, 100, 150};
+
+static float grNice(float v, const float *st, uint8_t n) {
+  for (uint8_t i = 0; i < n; i++) if (v <= st[i]) return st[i];
+  return st[n - 1];
+}
+static int16_t grRow(float val, float maxv) {              /* value -> pixel */
+  if (maxv <= 0) return GR_Y1 - 1;
+  float f = val / maxv;
+  if (f < 0.0f) f = 0.0f;
+  if (f > 1.0f) f = 1.0f;
+  int16_t y = GR_Y1 - 2 - (int16_t)(f * (GR_H - 3));
+  if (y < GR_Y0) y = GR_Y0;
+  if (y > GR_Y1 - 2) y = GR_Y1 - 2;
+  return y;
+}
+static int16_t grGridRow(uint8_t i) {                      /* gridline pixel */
+  return GR_Y1 - 1 - (int16_t)((float)i * (GR_H - 2) / (GR_GRIDS - 1));
+}
+static bool grIsGrid(int16_t y) {
+  for (uint8_t i = 0; i < GR_GRIDS; i++) if (grGridRow(i) == y) return true;
+  return false;
+}
+
+/* Repaint one column span with the background that belongs there - black,
+ * except where a gridline runs through it. */
+static void grErase(int16_t x, int16_t y0, int16_t y1) {
+  if (y0 < GR_Y0) y0 = GR_Y0;
+  if (y1 > GR_Y1 - 1) y1 = GR_Y1 - 1;
+  for (int16_t y = y0; y <= y1; y++)
+    gfx->drawPixel(x, y, grIsGrid(y) ? C_GRID : C_BLACK);
+}
+
+/* Axes, labels and gridlines. Redrawn only when a scale changes. */
+static void grFrame() {
+  gfx->fillScreen(C_BLACK);
+  gfx->drawRect(GR_X0 - 1, GR_Y0 - 1, GR_W + 2, GR_H + 2, C_DARKGREY);
+  for (uint8_t i = 0; i < GR_GRIDS; i++) {
+    int16_t y = grGridRow(i);
+    gfx->drawFastHLine(GR_X0, y, GR_W, C_GRID);
+    float fv = grVMax * i / (GR_GRIDS - 1);
+    float fa = grAMax * i / (GR_GRIDS - 1);
+    gfx->setTextSize(1);
+    gfx->setTextColor(C_VOLT); gfx->setCursor(4, y - 3);
+    gfx->print(fv, (grVMax >= 10) ? 0 : 1);
+    gfx->setTextColor(C_AMP);  gfx->setCursor(GR_X1 + 6, y - 3);
+    gfx->print(fa, (grAMax >= 10) ? 0 : 1);
+  }
+  gfx->setTextSize(1);
+  gfx->setTextColor(C_VOLT); gfx->setCursor(4, GR_Y0 - 12);       gfx->print(F("VOLTS"));
+  gfx->setTextColor(C_AMP);  gfx->setCursor(GR_X1 + 6, GR_Y0 - 12); gfx->print(F("AMPS"));
+  gfx->setTextColor(C_DARKGREY);
+  gfx->setCursor(GR_X0, GR_Y1 + 6);        gfx->print(F("-5 s"));
+  gfx->setCursor(GR_X1 - 22, GR_Y1 + 6);   gfx->print(F("now"));
+  for (uint16_t c = 0; c < GR_W; c++) { grVy0[c] = grVy1[c] = grIy0[c] = grIy1[c] = -1; }
+}
+
+static void grReadouts(float v, float a) {
+  gfx->setTextSize(2);
+  gfx->setTextColor(C_VOLT, C_BLACK); gfx->setCursor(GR_X0 + 4, 6);
+  gfx->print(v, 2); gfx->print(F(" V   "));
+  gfx->setTextColor(C_AMP, C_BLACK);  gfx->setCursor(GR_X0 + 150, 6);
+  gfx->print(a, 2); gfx->print(F(" A   "));
+  /* Achieved sample rate, measured - not the rate we asked for. If this drifts
+   * from the target the time axis is lying and you should know. */
+  gfx->setTextSize(1);
+  gfx->setTextColor(C_DARKGREY, C_BLACK); gfx->setCursor(GR_X1 - 62, 12);
+  gfx->print(grAchievedHz, 1); gfx->print(F(" Hz  "));
+}
+
+/* Runs on CORE 1 only. 32-bit aligned float and uint16_t stores are atomic on
+ * this part, so core 0 can read the ring while this writes it without tearing
+ * - the worst case is reading one sample older than the newest, which is
+ * invisible at 78 Hz.
+ *
+ * The ADC is a single shared peripheral, so ONLY ONE CORE MAY TOUCH IT. Core 0
+ * must not call adcAvg() while grRunning is set; graphStop() clears the flag
+ * and waits for core 1 to finish the sample in flight before returning.     */
+static void grSample() {
+  uint16_t rI = adcAvg(PIN_I_SENSE), r5 = adcAvg(PIN_V5_SENSE), rV = adcAvg(PIN_V_PACK);
+  uint16_t h = (grHead + 1) % GR_W;
+  grV[h] = packVolts(rV);
+  grI[h] = ampsFrom(rI, r5);
+  grHead = h;                          /* publish LAST, after the data       */
+  grSampCount++;
+}
+
+static void grDraw() {
+  {  /* measure what core 1 actually achieved over the last second */
+    static uint32_t lastT = 0, lastN = 0;
+    uint32_t now = millis(), n = grSampCount;
+    if (lastT && now - lastT >= 1000) {
+      grAchievedHz = (float)(n - lastN) * 1000.0f / (float)(now - lastT);
+      lastT = now; lastN = n;
+    } else if (!lastT) { lastT = now; lastN = n; }
+  }
+  /* autoscale: expand at once, shrink only after 2 s of headroom */
+  float mv = 0, ma = 0;
+  for (uint16_t i = 0; i < GR_W; i++) {
+    if (grV[i] > mv) mv = grV[i];
+    if (grI[i] > ma) ma = grI[i];
+  }
+  float wantV = grNice(mv * 1.15f, GR_VSTEPS, 7);
+  float wantA = grNice(ma * 1.15f, GR_ASTEPS, 7);
+  bool rescale = false;
+  if (wantV > grVMax || wantA > grAMax) { grVMax = wantV > grVMax ? wantV : grVMax;
+                                          grAMax = wantA > grAMax ? wantA : grAMax;
+                                          rescale = true; grShrinkOk = millis() + 2000; }
+  else if (millis() > grShrinkOk && (wantV < grVMax || wantA < grAMax)) {
+    grVMax = wantV; grAMax = wantA; rescale = true; grShrinkOk = millis() + 2000;
+  }
+  if (rescale) grFrame();
+
+  for (uint16_t c = 0; c < GR_W; c++) {
+    uint16_t idx  = (grHead + 1 + c) % GR_W;
+    uint16_t prev = (idx + GR_W - 1) % GR_W;
+    int16_t x = GR_X0 + c;
+
+    int16_t vy = grRow(grV[idx], grVMax), vp = (c == 0) ? vy : grRow(grV[prev], grVMax);
+    int16_t iy = grRow(grI[idx], grAMax), ip = (c == 0) ? iy : grRow(grI[prev], grAMax);
+    int16_t vy0 = vy < vp ? vy : vp, vy1 = (vy > vp ? vy : vp) + 1;   /* 2 px thick */
+    int16_t iy0 = iy < ip ? iy : ip, iy1 = (iy > ip ? iy : ip) + 1;
+
+    if (grVy0[c] >= 0 && (grVy0[c] != vy0 || grVy1[c] != vy1)) grErase(x, grVy0[c], grVy1[c]);
+    if (grIy0[c] >= 0 && (grIy0[c] != iy0 || grIy1[c] != iy1)) grErase(x, grIy0[c], grIy1[c]);
+    gfx->drawFastVLine(x, vy0, vy1 - vy0 + 1, C_VOLT);
+    gfx->drawFastVLine(x, iy0, iy1 - iy0 + 1, C_AMP);
+    grVy0[c] = vy0; grVy1[c] = vy1; grIy0[c] = iy0; grIy1[c] = iy1;
+  }
+  grReadouts(grV[grHead], grI[grHead]);
+}
+
+volatile bool grCore1Busy = false;
+
+/* ---- CORE 1 -------------------------------------------------------------
+ * Does nothing but sample, on a fixed micros() cadence, while the graph is
+ * running. Core 0 never blocks it, so the rate no longer collapses when a
+ * frame takes 31 ms to draw. This is the split DESIGN.md section 11 specifies. */
+void setup1() { }
+void loop1() {
+  static uint32_t next = 0;
+  if (!grRunning) { grCore1Busy = false; next = micros(); delay(1); return; }
+  if ((int32_t)(micros() - next) < 0) return;
+  next += GR_SAMPLE_US;                      /* += , so it CATCHES UP        */
+  if ((int32_t)(micros() - next) > (int32_t)GR_SAMPLE_US * 4)
+    next = micros() + GR_SAMPLE_US;          /* too far behind - resync      */
+  grCore1Busy = true;
+  grSample();
+  grCore1Busy = false;
+}
+
+/* Clear the flag and wait for core 1 to release the ADC before core 0 uses it. */
+static void graphStop() {
+  grRunning = false;
+  uint32_t t0 = millis();
+  while (grCore1Busy && millis() - t0 < 50) { }
+  delay(5);
+}
+
+static void graphStart() {
+  banner(F("LIVE V / I GRAPH"));
+  if (!gDisplayAttempted) { gfx->begin(SPI_HZ); gDisplayAttempted = true; }
+  Serial.print(F("  5 s window, ")); Serial.print(GR_W);
+  Serial.print(F(" columns, one sample every ")); Serial.print(GR_SAMPLE_US);
+  Serial.print(F(" us = ")); Serial.print(1000000.0f / GR_SAMPLE_US, 1);
+  Serial.println(F(" Hz target."));
+  Serial.println(F("  Sampling runs on CORE 1, drawing on core 0, so a slow frame no"));
+  Serial.println(F("  longer starves the sampler. The achieved rate is shown top-right"));
+  Serial.println(F("  on the panel - if it does not match the target, the axis is lying."));
+  Serial.println(F("  Blue = volts (left axis). Red = amps (right axis). Axes autoscale."));
+  if (!gVCal) info("voltage", "NOT calibrated - run 'v'. Trace is still live and correct in shape.");
+  if (!gICal) info("current", "NOT calibrated - run 'i'. Same caveat.");
+  Serial.println(F("  Press any key (not just Enter) to stop."));
+  for (uint16_t i = 0; i < GR_W; i++) { grV[i] = 0; grI[i] = 0; }
+  grHead = 0; grVMax = 10.0f; grAMax = 5.0f; grShrinkOk = millis() + 2000;
+  grSampCount = 0; grAchievedHz = 0.0f;
+  grFrame();
+  grLastFrame = millis();
+  grRunning = true;                     /* release core 1 LAST              */
 }
 
 /* ==========================================================================
@@ -438,6 +859,10 @@ static void ntcCalibrate() {
   banner(F("TWO-POINT NTC CALIBRATION"));
   Serial.println(F("  Point 1: ICE BATH  - crushed ice + water, stirred, is 0.00 C exactly."));
   Serial.println(F("  Point 2: BOILING   - ~99.8 C at 50 m. Correct for YOUR altitude."));
+  Serial.println(F("\n  SEAL THE PROBE FIRST. Bare leads in water put a few hundred kohm"));
+  Serial.println(F("  across the thermistor, which wrecks the COLD point specifically."));
+  Serial.println(F("  A thin plastic bag or a sealed straw is enough. Immerse fully,"));
+  Serial.println(F("  stir, and give it 30 s to settle before entering anything."));
   Serial.println(F("  Enter a blank line at any prompt to abort.\n"));
   Serial.println(F("  Type the value then press Enter. Set the Serial Monitor line"));
   Serial.println(F("  ending to Newline or Both NL & CR, or nothing will register."));
@@ -472,12 +897,35 @@ static void ntcCalibrate() {
   Serial.print(F("  FITTED  R25 = ")); Serial.print(R25fit, 1);
   Serial.print(F(" ohm  (")); Serial.print(R25fit / 1000.0f, 2); Serial.println(F(" k)"));
 
+  /* PLAUSIBILITY. A real +/-1% part cannot land far from nominal. If the fit
+   * says otherwise, the DATA is wrong - almost always the bath, not the part.
+   * A beta fit has only 2 free parameters and CANNOT absorb a temperature-
+   * dependent measurement error, so a bad point sends R25 and B somewhere
+   * arbitrary and a different pair of points sends them somewhere else. */
   bool sane = true;
-  if (Bfit < 2000.0f || Bfit > 5500.0f) {
-    fail("B out of range", "expected roughly 3000-4500 for a 100k NTC"); sane = false;
+  if (Bfit < NTC_B * 0.85f || Bfit > NTC_B * 1.15f) {
+    fail("B implausible", "more than 15% from nominal - suspect the measurement");
+    sane = false;
   }
-  if (R25fit < 50000.0f || R25fit > 200000.0f) {
-    fail("R25 out of range", "expected roughly 100k"); sane = false;
+  if (R25fit < NTC_R25 * 0.75f || R25fit > NTC_R25 * 1.25f) {
+    fail("R25 implausible", "more than 25% from nominal - suspect the measurement");
+    sane = false;
+  }
+  if (!sane) {
+    Serial.println(F("\n  DO NOT PASTE THESE. Check the measurement first:"));
+    Serial.println(F("   1. DMM ACROSS THE THERMISTOR, IN THE BATH, at the same moment."));
+    Serial.print  (F("      A healthy part reads about "));
+    Serial.print(NTC_R25 / 1000.0f, 0); Serial.print(F("k at 25 C, "));
+    Serial.print(NTC_R25 * expf(NTC_B * (1.0f/273.15f - 1.0f/298.15f)) / 1000.0f, 0);
+    Serial.print(F("k at 0 C, "));
+    Serial.print(NTC_R25 * expf(NTC_B * (1.0f/373.0f - 1.0f/298.15f)) / 1000.0f, 1);
+    Serial.println(F("k at 100 C."));
+    Serial.println(F("   2. IS THE PROBE WATERPROOF? Bare leads in water shunt the"));
+    Serial.println(F("      thermistor. That drags COLD readings down hard (R_ntc is"));
+    Serial.println(F("      high there) and barely touches hot ones - which is exactly"));
+    Serial.println(F("      the shape that breaks a 2-point fit. Seal it in a bag."));
+    Serial.println(F("   3. IS IT FULLY IMMERSED AND STIRRED? Lead conduction pulls a"));
+    Serial.println(F("      shallow probe toward room temperature."));
   }
   if (sane) {
     Serial.print(F("\n  vs nominal: B ")); Serial.print((Bfit / NTC_B - 1.0f) * 100.0f, 2);
@@ -529,7 +977,9 @@ static void voltageCalibrate() {
   Serial.println(F("  Feed the supply into the INPUT connector (J1/J2). No load needed."));
   Serial.println(F("  Use a LOW current limit - a few tens of mA is plenty.\n"));
   Serial.println(F("  Use two WIDELY SPACED points. Read the actual voltage from your"));
-  Serial.println(F("  meter, not from the supply's own display.\n"));
+  Serial.println(F("  meter, not from the supply's own display."));
+  Serial.println(F("  The V_PACK safety check in 'a' will report FAIL while voltage is"));
+  Serial.println(F("  applied. That is the interlock doing its job, not a fault.\n"));
 
   float v1, v2; uint16_t r1, r2;
 
@@ -619,7 +1069,7 @@ static void currentCalibrate() {
     fail("tare", "quiescent ratio far from the expected 0.1 - is current flowing?");
     return;
   }
-  gIQuiescent = q;
+  gIQuiescent = q; gIZero = true;
   Serial.print(F("  quiescent = ")); Serial.print(q, 6);
   Serial.print(F("   (nominal 0.100000, ")); Serial.print((q / ACS_QUIESCENT - 1.0f) * 100.0f, 2);
   Serial.println(F(" %)"));
@@ -872,7 +1322,11 @@ static void backlightTest() {
   Serial.println(F("  Ramping 0 -> 255 over ~2 s. Watch the panel edge."));
   analogWrite(PIN_LCD_LED, 0); delay(400);
   for (int d = 0; d <= 255; d += 3) { analogWrite(PIN_LCD_LED, d); delay(6); }
-  analogWrite(PIN_LCD_LED, 255);
+  /* End SOLID ON, not analogWrite(255). The ramp is only a diagnostic; the
+   * operating state is a hard-driven pin with NO switching at all. See the
+   * note at PIN_LCD_LED for why PWM here is actively harmful. */
+  pinMode(PIN_LCD_LED, OUTPUT);
+  digitalWrite(PIN_LCD_LED, HIGH);
   info("backlight", "cannot be read back - if it stayed dark the fault is one of:");
   Serial.println(F("      JP1 not bridged / cold joint | R14 missing | FPC 8 open"));
   Serial.println(F("      ribbon reversed or mis-seated | module itself dead"));
@@ -913,6 +1367,9 @@ static void bbReadRegister(uint8_t cmd, uint8_t *out, uint8_t len) {
 
 static void misoTest() {
   banner(F("MISO READ-BACK  (DESIGN.md section 11)"));
+  Serial.println(F("  NOTE: a working display does NOT require MISO. The panel is driven"));
+  Serial.println(F("  write-only, so this test can fail on a completely healthy board."));
+  Serial.println(F("  It is only meaningful with a microSD card actually in the slot."));
   uint8_t d3[4], id4[4];
 
   pinMode(PIN_LCD_CS,  OUTPUT); digitalWrite(PIN_LCD_CS,  HIGH);
@@ -943,9 +1400,17 @@ static void misoTest() {
     pass("FPC 9 / SPI_MISO / R13",
          "0x7796 returned - MISO continuous AND the microSD is tri-stating. Section 11 answered, R13 stays 0R.");
   } else if (allFF) {
-    fail("FPC 9 / SPI_MISO / R13",
-         "all 0xFF = the pin is floating at its own pull-up. Nothing is driving it:");
-    Serial.println(F("      module unpowered (JP1) | R13 missing | FPC 9 open | ribbon reversed"));
+    info("FPC 9 / SPI_MISO / R13",
+         "all 0xFF = nothing is driving the pin. NOT necessarily a fault:");
+    Serial.println(F("      * IS THERE A microSD CARD IN THE SLOT? On many of these modules"));
+    Serial.println(F("        the FPC MISO pin is driven ONLY by the card. Empty slot = floating"));
+    Serial.println(F("        MISO = 0xFF, with a perfectly healthy board and a working panel."));
+    Serial.println(F("      * The ST7796 may not drive SDO at all through the module's level"));
+    Serial.println(F("        shifter, which is usually one-way for the MCU->panel direction."));
+    Serial.println(F("      * Only if the DISPLAY IS ALSO DEAD does this point at the wiring:"));
+    Serial.println(F("        module unpowered (JP1) | R13 missing | FPC 9 open | ribbon reversed"));
+    Serial.println(F("      Insert a card and re-run 'm'. DESIGN.md S11 asks whether the SD"));
+    Serial.println(F("      TRI-STATES cleanly - a question with no meaning on an empty slot."));
   } else if (all00) {
     fail("FPC 9 / SPI_MISO / R13", "all 0x00 = MISO held low. Suspect a short to GND.");
   } else {
@@ -969,6 +1434,11 @@ static bool ftReadBlock(uint8_t reg, uint8_t *buf, uint8_t len) {
   if (Wire1.requestFrom((uint8_t)FT_ADDR, len) != len) return false;
   for (uint8_t i = 0; i < len; i++) buf[i] = Wire1.read();
   return true;
+}
+
+static void ftWrite(uint8_t reg, uint8_t val) {
+  Wire1.beginTransmission(FT_ADDR); Wire1.write(reg); Wire1.write(val);
+  Wire1.endTransmission();
 }
 
 static void touchTest() {
@@ -1014,8 +1484,56 @@ static void touchTest() {
   if (hi == 0x64 && ven == 0x11) pass("FT6336U identity", "0x64 + FocalTech 0x11 as expected");
   else                           fail("FT6336U identity", "expected 0xA3=0x64 and 0xA8=0x11");
 
-  Wire1.beginTransmission(FT_ADDR); Wire1.write(FT_REG_MODE);  Wire1.write(0x00); Wire1.endTransmission();
-  Wire1.beginTransmission(FT_ADDR); Wire1.write(FT_REG_PMODE); Wire1.write(0x00); Wire1.endTransmission();
+  /* ---- configure for responsiveness ------------------------------------
+   * The factory defaults are tuned for battery life, not for a bench meter,
+   * and they are why touch felt hit-or-miss: 0x86 allows MONITOR mode and
+   * 0x87 drops into it after 30 SECONDS of no touch, where the panel scans
+   * slowly and the first touch back is late or lost entirely.              */
+  ftWrite(FT_REG_MODE,         0x00);  /* normal working mode                */
+  ftWrite(FT_REG_PMODE,        0x00);  /* P_ACTIVE                           */
+  ftWrite(FT_REG_CTRL,         0x00);  /* FORBID monitor mode - the main fix */
+  ftWrite(FT_REG_PERIODACTIVE, 0x04);  /* fastest allowed scan period        */
+  ftWrite(FT_REG_INTMODE,      0x01);  /* hold INT low while reporting       */
+  Wire1.setClock(400000);              /* 100k was a bring-up choice; the
+                                        * FT6336U is happy at 400k and it
+                                        * cuts each read to a quarter        */
+  delay(5);
+
+  uint8_t rb;
+  Serial.print(F("  config read-back:"));
+  if (ftRead(FT_REG_CTRL, &rb))         { Serial.print(F("  0x86=")); hex2(rb); }
+  if (ftRead(FT_REG_PERIODACTIVE, &rb)) { Serial.print(F("  0x88=")); hex2(rb); }
+  if (ftRead(FT_REG_INTMODE, &rb))      { Serial.print(F("  0xA4=")); hex2(rb); }
+  if (ftRead(FT_REG_PMODE, &rb))        { Serial.print(F("  0xA5=")); hex2(rb); }
+  Serial.println(F("   (want 0x86=00, 0x88=04)"));
+
+  /* ---- interrupt ---- */
+  if (!gIrqAttached) {
+    attachInterrupt(digitalPinToInterrupt(PIN_CTP_INT), ctpIsr, FALLING);
+    gIrqAttached = true;
+  }
+  gIrqReads = gPollReads = 0;
+  Serial.print(F("  CTP_INT (GP13) idle level: "));
+  Serial.println(digitalRead(PIN_CTP_INT) ? F("HIGH - correct, asserts LOW on touch")
+                                          : F("LOW while untouched - suspect"));
+}
+
+/* Crosshair sized to be visible AROUND a fingertip rather than hidden under
+ * it: long arms with a gap in the middle, plus a ring wider than a typical
+ * contact patch. 2 px everywhere so it reads clearly on video.             */
+#define CROSS_ARM   34
+#define CROSS_GAP    9
+#define CROSS_RING  26
+static void drawCross(int16_t x, int16_t y, uint16_t c) {
+  int16_t len = CROSS_ARM - CROSS_GAP;
+  for (int8_t k = 0; k < 2; k++) {
+    gfx->drawFastHLine(x - CROSS_ARM, y + k, len, c);
+    gfx->drawFastHLine(x + CROSS_GAP, y + k, len, c);
+    gfx->drawFastVLine(x + k, y - CROSS_ARM, len, c);
+    gfx->drawFastVLine(x + k, y + CROSS_GAP, len, c);
+  }
+  gfx->drawCircle(x, y, CROSS_RING,     c);
+  gfx->drawCircle(x, y, CROSS_RING - 1, c);
 }
 
 static bool touchRead(uint16_t *rx, uint16_t *ry) {
@@ -1118,9 +1636,35 @@ static void help() {
   Serial.println(F("    n   two-point NTC calibration (ice bath + boiling)"));
   Serial.println(F("    v   pack-voltage calibration, two point"));
   Serial.println(F("    i   current calibration, tare then gain"));
+  Serial.println(F("    g   LIVE V/I GRAPH - 5 s scrolling window"));
+  Serial.println(F("    c   show the stored calibration constants"));
   Serial.println(F("    r   re-run the full sequence"));
   Serial.println(F("    ?   this list"));
   Serial.println(F("\n  Buttons are logged live at all times - just press them."));
+}
+
+static void calShow() {
+  Serial.println();
+  Serial.println(F("  ---- stored calibration (baked into this build) ----"));
+  Serial.print(F("   VOLTAGE  ")); Serial.print(gVCal ? F("CALIBRATED  ") : F("nominal     "));
+  Serial.print(F("gain ")); Serial.print(gVGain, 8);
+  Serial.print(F("  offset ")); Serial.print(gVOffset, 5); Serial.println(F(" V"));
+  Serial.print(F("   CURRENT  "));
+  Serial.print(gICal ? F("ZERO+GAIN   ") : (gIZero ? F("ZERO only   ") : F("nominal     ")));
+  Serial.print(F("quiescent ")); Serial.print(gIQuiescent, 6);
+  Serial.print(F("  sens ")); Serial.print(gISens, 8);
+  if (gICal && gICalCurrent > 0) {
+    Serial.print(F("  fitted at ")); Serial.print(gICalCurrent, 1);
+    Serial.print(F(" A  (+/-")); Serial.print(1.5f / gICalCurrent * 100.0f, 1);
+    Serial.print(F("% from nonlinearity)"));
+  }
+  Serial.println();
+  Serial.print(F("   THERM    RV1 ")); Serial.print(RV1_OHMS / 1000.0f, 2);
+  Serial.print(F("k   R25 ")); Serial.print(NTC_R25 / 1000.0f, 2);
+  Serial.print(F("k   B ")); Serial.print(NTC_B, 1);
+  Serial.println(F("   [FITTED 2026-08-25, B from 21.1/100 C, R25 from 22.1 C dry]"));
+  if (!gICal) Serial.println(F("   -> current GAIN is nominal. Run 'i' and paste I_SENS_CAL."));
+  Serial.println();
 }
 
 static void fullRun() {
@@ -1131,6 +1675,7 @@ static void fullRun() {
   Serial.println(F("   <- if this is not the last time you compiled, the upload did not take"));
   Serial.println(F("  USB POWER ONLY. Nothing in the 60 V current path."));
   Serial.println(F("  Board-only tests run FIRST and do not depend on the display."));
+  calShow();
 
   banner(F("ANALOG / ADC  (board only - no ribbon needed)"));
   adcReport(true);
@@ -1156,7 +1701,7 @@ void setup() {
   pinMode(PIN_SD_CS, OUTPUT); digitalWrite(PIN_SD_CS, HIGH);
   pinMode(PIN_BTN1, INPUT_PULLUP);
   pinMode(PIN_BTN2, INPUT_PULLUP);
-  pinMode(PIN_LCD_LED, OUTPUT); analogWrite(PIN_LCD_LED, 0);
+  pinMode(PIN_LCD_LED, OUTPUT); digitalWrite(PIN_LCD_LED, LOW);
 
   analogReadResolution(12);
 
@@ -1199,9 +1744,16 @@ void loop() {
 
   if (Serial.available()) {
     int c = Serial.read();
-    if (streamAdc || streamTouch) { streamAdc = streamTouch = false;
-      Serial.println(F("  (stream stopped)")); }
-    else switch (c) {
+    if (c == '\r' || c == '\n') {
+      /* stray line ending - NOT a keypress. Ignoring this is what lets a
+       * stream survive the Enter that started it. */
+    }
+    else if (streamAdc || streamTouch || grRunning) {
+      if (grRunning) graphStop();       /* let core 1 release the ADC first  */
+      streamAdc = streamTouch = false; drainLineEnd();
+      Serial.println(F("  (stream stopped)"));
+    }
+    else { drainLineEnd(); switch (c) {
       case 'a': banner(F("ANALOG / ADC")); adcReport(true);  break;
       case 'A': streamAdc = true; Serial.println(F("  streaming ADC, any key stops")); break;
       case 'b': buttonReport();   break;
@@ -1210,16 +1762,36 @@ void loop() {
       case 'm': misoTest();       break;
       case 'd': displayTest();    break;
       case 't': touchTest();      break;
-      case 'x': streamTouch = true; Serial.println(F("  streaming touch, any key stops")); break;
+      case 'x':
+        if (!gTouchPresent) {
+          info("touch not detected yet", "running the scan first");
+          touchTest();
+        }
+        if (!gTouchPresent) {
+          fail("touch stream", "no FT6336U at 0x38 - nothing to stream");
+        } else {
+          streamTouch = true;
+          if (gDisplayAttempted) {          /* clean slate so black erase works */
+            gfx->fillScreen(C_BLACK);
+            gfx->drawRect(0, 0, LCD_W, LCD_H, C_DARKGREY);
+            gfx->setTextSize(1); gfx->setTextColor(C_DARKGREY);
+            gfx->setCursor(6, 6); gfx->print(F("touch test - drag a finger"));
+          }
+          Serial.println(F("  Streaming touch. Drag a finger; the crosshair should follow it."));
+          Serial.println(F("  Press any key (not just Enter) to stop."));
+        }
+        break;
       case 'e': escPulseTest();   break;
       case 'l': loopbackTest();   break;
       case 'n': ntcCalibrate();   break;
       case 'v': voltageCalibrate(); break;
       case 'i': currentCalibrate(); break;
+      case 'g': graphStart();     break;
       case 'r': fullRun();        break;
+      case 'c': calShow();        break;
       case '?': help();           break;
       default: break;
-    }
+    } }
   }
 
   if (streamAdc && millis() >= nextStream) {
@@ -1228,6 +1800,17 @@ void loop() {
   }
 
   if (streamTouch && gTouchPresent) {
+    static uint32_t lastPoll = 0, lastStat = 0;
+    /* INT asserted (edge caught by the ISR, or still held low) means a report
+     * is waiting. Otherwise fall back to a slow timed poll, so a broken
+     * CTP_INT degrades to the old behaviour instead of looking like dead
+     * touch - and the counters below make that visible.                     */
+    bool byIrq   = gTouchIrq || (digitalRead(PIN_CTP_INT) == LOW);
+    bool byTimer = (millis() - lastPoll) >= 50;
+    if (byIrq || byTimer) {
+      gTouchIrq = false; lastPoll = millis();
+      if (byIrq) gIrqReads++; else gPollReads++;
+
     uint16_t rx, ry;
     if (touchRead(&rx, &ry)) {
       int16_t sx, sy; touchMap(rx, ry, &sx, &sy);
@@ -1239,16 +1822,34 @@ void loop() {
         Serial.print(F(" y=")); Serial.println(sy);
       }
       if (gDisplayAttempted && sx >= 0 && sx < LCD_W && sy >= 0 && sy < LCD_H) {
-        if (px_ >= 0) {
-          gfx->drawFastHLine(px_ - 10, py_, 21, C_BLACK);
-          gfx->drawFastVLine(px_, py_ - 10, 21, C_BLACK);
-        }
-        gfx->drawFastHLine(sx - 10, sy, 21, C_GREEN);
-        gfx->drawFastVLine(sx, sy - 10, 21, C_GREEN);
+        /* Erasing with black is only correct because 'x' clears the screen
+         * first. Drawing black over the test pattern is what was punching
+         * permanent holes in the white diagonals. */
+        if (px_ >= 0) drawCross(px_, py_, C_BLACK);
+        drawCross(sx, sy, C_GREEN);
         px_ = sx; py_ = sy;
+      }
+    }
+    }  /* byIrq || byTimer */
+
+    /* once a second, say how the samples were being triggered */
+    if (millis() - lastStat > 1000) {
+      lastStat = millis();
+      if (gIrqReads + gPollReads > 0) {
+        Serial.print(F("  [rate] INT-triggered ")); Serial.print(gIrqReads);
+        Serial.print(F("   timed-fallback ")); Serial.print(gPollReads);
+        if (gIrqReads == 0)
+          Serial.print(F("   <- NO INT ACTIVITY: check CTP_INT / FPC 13 / GP13"));
+        Serial.println();
+        gIrqReads = gPollReads = 0;
       }
     }
   }
 
-  delay(2);
+  if (grRunning) {                      /* core 0 draws only; core 1 samples */
+    uint32_t now = millis();
+    if (now - grLastFrame >= GR_FRAME_MS) { grLastFrame = now; grDraw(); }
+  }
+
+  delay((streamTouch || grRunning) ? 0 : 2);
 }
