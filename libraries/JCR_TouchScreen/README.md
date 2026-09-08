@@ -32,7 +32,7 @@ counted, never silent.
 ```cpp
 #include <JCR_TouchScreen.h>
 
-JCR_ST7796 tft(5, 6, 7, 8);                 // CS, DC, RST, backlight
+JCR_ST7796 tft(5, 6, 7, 8);                 // CS, DC, RST, backlight (IPS: inversion on)
 JCR_FT6336 touch(Wire1, 10, 11, 12, 13);    // I2C bus, SDA, SCL, RST, INT
 JCR_Text   text(tft);
 
@@ -55,6 +55,13 @@ void loop() {
     if (ev.type == JCR_TOUCH_DOWN) tft.fillCircle(ev.x, ev.y, 6, 0xFFE0);
 }
 ```
+
+### IPS panels and colour inversion
+
+The IPS variants of these modules need the controller's display inversion **on** (`INVON`), or
+every colour comes out as its complement — black paints as white, dark blue as pale yellow. The
+constructor's fifth argument `ips` (default **true**) handles it. If you painted black and got a
+white screen, pass `false`: you have a TN panel.
 
 ## Wiring
 
@@ -194,6 +201,9 @@ glyph then occupies the same cell and the field width never shifts.
 | `dropouts` | A held contact briefly read as released and was bridged. A few is normal. |
 | `overflows` | Event queue filled — your drawing core isn't draining often enough. |
 | `intEdges` | INT pin activity. Diagnostic only; nothing depends on it. |
+| `regDrift` / `lastDriftReg` | The servicing core reads the four configuration registers back every 2 s. Any that no longer holds what `begin()` wrote is counted, attributed, and rewritten. A part reverting to trigger or monitor mode on its own shows up here — and gets corrected. |
+| `serviceUsMax` | Longest single sample transaction. A slow or stuck I2C bus becomes a number. `resetServiceMax()` clears it per window. |
+| `reinits` | `requestReinit()` calls honoured — re-runs `begin()` on the servicing core, safe to call from the other one. A bench test for "has the controller lost its mind". |
 
 ## Requirements
 

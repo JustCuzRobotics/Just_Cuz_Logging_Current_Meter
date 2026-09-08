@@ -6,6 +6,15 @@
  * 3.5" IPS module and matches Arduino_GFX's ST7796 table (same gamma, same
  * VCOM), so panels that worked there work here.
  *
+ * ---- IPS panels are colour-inverted ----
+ * The IPS variants of this module need the controller's display inversion ON
+ * (INVON, 0x21) or every colour comes out as its complement: black shows as
+ * white, dark blue as pale yellow. Arduino_GFX handles this with its `ips`
+ * constructor flag; this class does the same, and it defaults to true because
+ * the module the library is documented against is IPS. If your panel shows a
+ * white screen where you painted black, you have it the wrong way round —
+ * pass false for a TN panel.
+ *
  * ---- Adding another controller ----
  * Copy this file, keep the same three overrides, and change:
  *   writeInit()    your controller's command table
@@ -22,8 +31,9 @@
 
 class JCR_ST7796 : public JCR_TFT {
  public:
-  JCR_ST7796(int8_t csPin, int8_t dcPin, int8_t rstPin = -1, int8_t blPin = -1)
-      : JCR_TFT(csPin, dcPin, rstPin, blPin) {}
+  JCR_ST7796(int8_t csPin, int8_t dcPin, int8_t rstPin = -1, int8_t blPin = -1,
+             bool ips = true)
+      : JCR_TFT(csPin, dcPin, rstPin, blPin), _ips(ips) {}
 
  protected:
   void nativeSize(int16_t &w, int16_t &h) override { w = 320; h = 480; }
@@ -66,11 +76,12 @@ class JCR_ST7796 : public JCR_TFT {
     cmd1(0xF0, 0x69);
     delay(120);
 
-    writeCommand(0x20);                             /* inversion off        */
+    writeCommand(_ips ? 0x21 : 0x20);               /* INVON for IPS panels */
     writeCommand(0x38);                             /* idle mode off        */
     writeCommand(0x29); delay(20);                  /* display on           */
   }
 
  private:
+  bool _ips;
   void cmd1(uint8_t c, uint8_t a) { writeCommand(c, &a, 1); }
 };

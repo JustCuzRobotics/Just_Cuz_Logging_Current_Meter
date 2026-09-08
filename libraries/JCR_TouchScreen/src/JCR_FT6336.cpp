@@ -22,13 +22,17 @@ JCR_FT6336::JCR_FT6336(TwoWire &wire, int8_t sdaPin, int8_t sclPin,
       _down(false), _emptyRun(0), _releaseConfirm(2), _jumpPx(60),
       _lastRawX(0), _lastRawY(0), _downMicros(0),
       _seq(0), _pubRawX(0), _pubRawY(0), _pubPoints(0), _pubDown(false),
-      _pubDownMicros(0), _qHead(0), _qTail(0), _statsResetReq(false) {
+      _pubDownMicros(0), _qHead(0), _qTail(0), _statsResetReq(false),
+      _svcMaxResetReq(false), _reinitReq(false),
+      _i2cHz(400000), _sampleHzCfg(200), _lastVerifyMs(0), _wireStarted(false) {
   memset((void *)&_stats, 0, sizeof(_stats));
 }
 
 bool JCR_FT6336::begin(uint32_t i2cHz, uint16_t sampleHz) {
   if (sampleHz == 0) sampleHz = 1;
   _periodUs = 1000000UL / sampleHz;
+  _i2cHz = i2cHz;
+  _sampleHzCfg = sampleHz;
 
   if (_int >= 0) pinMode(_int, INPUT_PULLUP);
   if (_rst >= 0) {
@@ -38,9 +42,15 @@ bool JCR_FT6336::begin(uint32_t i2cHz, uint16_t sampleHz) {
     digitalWrite(_rst, HIGH); delay(300);   /* the part is slow to boot */
   }
 
-  _wire->setSDA(_sda);
-  _wire->setSCL(_scl);
-  _wire->begin();
+  /* Bus bring-up happens once. begin() can be re-run to restart the
+   * controller (requestReinit), and the RP2040 core panics if a pin is
+   * reassigned on a running bus. */
+  if (!_wireStarted) {
+    _wire->setSDA(_sda);
+    _wire->setSCL(_scl);
+    _wire->begin();
+    _wireStarted = true;
+  }
   _wire->setClock(100000);        /* configure at a conservative rate */
   delay(50);
 
@@ -65,8 +75,37 @@ bool JCR_FT6336::begin(uint32_t i2cHz, uint16_t sampleHz) {
 
   _ok = ok;
   _nextUs = micros();
+  _lastVerifyMs = millis();
   return ok;
 }
+
+/* The four registers begin() configures, and the values it wrote. Read back
+ * periodically from the servicing core; any mismatch is counted, attributed,
+ * and corrected. This exists because "touch fades after a couple of minutes"
+ * has exactly the shape of the part quietly falling back into monitor or
+ * trigger mode, and a counter that stays at zero is as useful as one that
+ * climbs — it rules the controller out. */
+bool JCR_FT6336::verifyRegs() {
+  static const uint8_t kReg[4] = { FT_REG_DEV_MODE, FT_REG_MONITOR,
+                                   FT_REG_PERIOD_MON, FT_REG_G_MODE };
+  static const uint8_t kVal[4] = { 0x00, 0x00, 0x04, 0x00 };
+  bool clean = true;
+  for (uint8_t i = 0; i < 4; i++) {
+    uint8_t v;
+    if (!readRegs(kReg[i], &v, 1)) { _stats.i2cErrors++; return false; }
+    if (v != kVal[i]) {
+      clean = false;
+      _stats.regDrift++;
+      _stats.driftByReg[i]++;
+      _stats.lastDriftReg = kReg[i];
+      writeReg(kReg[i], kVal[i]);
+    }
+  }
+  return clean;
+}
+
+void JCR_FT6336::requestReinit()   { _reinitReq = true; }
+void JCR_FT6336::resetServiceMax() { _svcMaxResetReq = true; }
 
 void JCR_FT6336::setMapping(int16_t nativeW, int16_t nativeH, uint8_t rotation,
                             bool invertX, bool invertY) {
@@ -151,9 +190,37 @@ void JCR_FT6336::serviceNow() {
     _stats.sampleHz = keepHz;
     _statsResetReq = false;
   }
+  if (_svcMaxResetReq) { _stats.serviceUsMax = 0; _svcMaxResetReq = false; }
+  if (_reinitReq) {
+    _reinitReq = false;
+    /* begin() blocks for ~400 ms (the part's reset). Acceptable: this is a
+     * bench command, and it runs on the servicing core so the UI core is
+     * untouched. Counters survive; only the controller is restarted. */
+    uint32_t keep[2] = { _stats.reinits, _stats.regDrift };
+    uint8_t  keepReg = _stats.lastDriftReg;
+    bool wasDown = _down;
+    begin(_i2cHz, (uint16_t)_sampleHzCfg);
+    _stats.reinits = keep[0] + 1;
+    _stats.regDrift = keep[1];
+    _stats.lastDriftReg = keepReg;
+    if (wasDown) { _down = false; _pubDown = false; pushEvent(JCR_TOUCH_UP, _lastRawX, _lastRawY); }
+    return;
+  }
+
+  /* Register watchdog, every 500 ms, between samples. Bench data showed the
+   * mode register losing its value ~every 50 s on average; half a second is
+   * the longest the part is allowed to run misconfigured. */
+  uint32_t nowMsW = millis();
+  if (nowMsW - _lastVerifyMs >= 500) {
+    _lastVerifyMs = nowMsW;
+    verifyRegs();
+  }
 
   uint8_t b[5];
+  uint32_t t0 = micros();
   bool ok = readRegs(FT_REG_TD_STATUS, b, 5);
+  uint32_t dt = micros() - t0;
+  if (dt > _stats.serviceUsMax) _stats.serviceUsMax = dt;
 
   _sampleCount++;
   uint32_t nowMs = millis();
@@ -249,6 +316,11 @@ void JCR_FT6336::getStats(JCRTouchStats &out) const {
   out.overflows     = _stats.overflows;
   out.intEdges      = _stats.intEdges;
   out.sampleHz      = _stats.sampleHz;
+  out.regDrift      = _stats.regDrift;
+  out.lastDriftReg  = _stats.lastDriftReg;
+  for (uint8_t i = 0; i < 4; i++) out.driftByReg[i] = _stats.driftByReg[i];
+  out.serviceUsMax  = _stats.serviceUsMax;
+  out.reinits       = _stats.reinits;
 }
 
 void JCR_FT6336::resetStats() { _statsResetReq = true; }

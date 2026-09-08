@@ -63,6 +63,20 @@ struct JCRTouchStats {
   uint32_t overflows;      /* event queue full — a press/release was lost */
   uint32_t intEdges;       /* INT pin activity (diagnostic only)          */
   uint32_t sampleHz;       /* achieved service() rate, refreshed each 1 s */
+  /* Controller health, added for chasing responsiveness that fades with
+   * time. regDrift counts every time the periodic read-back found one of the
+   * configuration registers no longer holding what begin() wrote — the part
+   * reverting to trigger or monitor mode on its own — and lastDriftReg says
+   * which. serviceUsMax is the longest single sample transaction seen, so a
+   * slow or stuck I2C bus is a number rather than a mystery. reinits counts
+   * requestReinit() calls that were honoured. */
+  uint32_t regDrift;
+  uint8_t  lastDriftReg;
+  uint32_t driftByReg[4];  /* per register: 0x00, 0x86, 0x88, 0xA4. All four
+                            * climbing together = the part is resetting;
+                            * one alone = something specific to that register */
+  uint32_t serviceUsMax;
+  uint32_t reinits;
 };
 
 class JCR_FT6336 {
@@ -97,6 +111,12 @@ class JCR_FT6336 {
   void flushEvents();
 
   void getStats(JCRTouchStats &out) const;
+  /* Clear serviceUsMax only — the per-window "worst" for telemetry. Consumer
+   * side, same request mechanism as resetStats(). */
+  void resetServiceMax();
+  /* Re-run begin() on the servicing core at its next sample: a bench test for
+   * "has the controller lost its configuration". Safe from the other core. */
+  void requestReinit();
   /* Safe to call from the consumer core: it only raises a request, which the
    * servicing core acts on at the top of its next sample. Keeps the
    * one-writer-per-direction rule that makes the counters lock-free. */
@@ -157,6 +177,14 @@ class JCR_FT6336 {
 
   volatile JCRTouchStats _stats;
   volatile bool          _statsResetReq;
+  volatile bool          _svcMaxResetReq;
+  volatile bool          _reinitReq;
+
+  /* register watchdog */
+  uint32_t _i2cHz, _sampleHzCfg;
+  uint32_t _lastVerifyMs;
+  bool     _wireStarted;
+  bool verifyRegs();
 };
 
 /* --------------------------------------------------------------------------
