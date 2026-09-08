@@ -1,5 +1,5 @@
 /* ==========================================================================
- * logging_current_meter_FABLE.ino — v3.0 (2026-09-08)
+ * logging_current_meter_FABLE.ino — v3.1c (2026-09-08)
  *
  * Touchscreen UI for the Just 'Cuz Robotics Logging Current Meter (Rev A).
  * RP2040-Zero + 3.5" 480x320 ST7796/FT6336U on one FPC.
@@ -12,6 +12,8 @@
  *   Format.*      fixed-point value formatters
  *   Sampler.*     core-1 ADC, calibration maths, graph history ring
  *   Widgets.*     button chrome, cached fields, toast
+ *   Settings.*    user settings and their flash persistence
+ *   EscOut.*      ESC servo-signal output (hardware PWM, auto-cycle)
  *   Screens.*     navigation and dispatch
  *   Screen*.cpp   one file per screen
  *
@@ -39,6 +41,45 @@
  *
  * --------------------------------------------------------------------------
  * Version history
+ *   v3.1c 2026-09-08  First harness data: the FT6336U's mode register (0xA4)
+ *                     was found drifting 47 times in 39 min and being
+ *                     rewritten by the watchdog — the likely cause of the
+ *                     fade, and the reason it "works a lot better" now. The
+ *                     watchdog now counts drift per register (to tell a
+ *                     resetting part from a flaky register) and checks every
+ *                     500 ms. Navy classic palette (0x0020 was the green
+ *                     LSB, not blue); Test Mode rows re-spaced; Dev Mode's
+ *                     crosshair restores what it drags across.
+ *   v3.1b 2026-09-08  DISPLAY WAS COLOUR-INVERTED SINCE v2.0. The IPS panel
+ *                     needs INVON; the GFX firmware set it via its `ips`
+ *                     flag, the JCR driver sent INVOFF. Every palette since
+ *                     v2.0 was judged as its complement. Fixed in the
+ *                     library (ips flag, default on) + LCD_IPS in Config.h.
+ *                     Also a touch-responsiveness harness for chasing the
+ *                     fade-after-a-minute report: tap latency, worst frame,
+ *                     controller register watchdog + reinit, core-1 tick
+ *                     health, a 1 s serial telemetry line, and serial keys
+ *                     to bisect at the bench (see Serial below).
+ *   v3.1a 2026-09-08  Test Mode / Settings UI fixes. The Russo One headers had
+ *                     been generated with a reduced charset, so '+', '/', ','
+ *                     and '%' were zero-width and silently dropped — the pulse
+ *                     steppers read "-50 -10 -10 -50". Regenerated with those
+ *                     glyphs (heights unchanged, so no layout drift). Three
+ *                     labels that overflowed their boxes were measured and
+ *                     re-fitted, stepper +/- became vector bars instead of a
+ *                     5x7 speck, and PAL_DARK's borders went brighter, not
+ *                     dimmer: with no box fill the strokes carry all the
+ *                     structure, and dim ones left a flat wash.
+ *   v3.1  2026-09-08  Test Mode (ESC signal, manual set point + auto-cycle on
+ *                     hardware PWM), Settings screen, runtime themes with a
+ *                     genuinely dark palette, and a tunable weighted moving
+ *                     average on the V and I readings. The Calibrate screen
+ *                     is gone — it only showed compile-time constants, so it
+ *                     is now a serial dump from Settings.
+ *   v3.0a 2026-09-08  Banner moved out of setup() into a first-connection
+ *                     announce in loop(): USB CDC enumerates after setup()
+ *                     begins, so the boot banner was being discarded and the
+ *                     board looked dead over serial when it was running fine.
  *   v3.0  2026-09-08  Split into modules; display/touch/text extracted into
  *                     the reusable JCR_TouchScreen library. Behaviour is
  *                     v2.1's; the touch event queue moved from the RP2040
@@ -51,7 +92,13 @@
  *                     FABLE_DEV_TEST_SCREEN v1.1; raw 40 MHz ST7796 driver,
  *                     Russo One typography, per-button enlarged hit rects.
  *
- * Serial 115200. 'r' resets the touch diagnostic counters.
+ * Serial 115200. Keys:
+ *   r  reset touch diagnostic counters
+ *   d  toggle the once-per-second [tp] telemetry line
+ *   t  re-initialise the touch controller (runs on core 1)
+ *   L  toggle synthetic core-0 load (full-screen fill every loop)
+ *   f  filter 0 <-> 20 samples
+ *   e  ESC output arm/disarm at 1500 us
  * ========================================================================*/
 #include <JCR_TouchScreen.h>
 
@@ -62,8 +109,10 @@
 #include "Sampler.h"
 #include "Widgets.h"
 #include "Screens.h"
+#include "Settings.h"
+#include "EscOut.h"
 
-JCR_ST7796 tft(PIN_LCD_CS, PIN_LCD_RS, PIN_LCD_RST, PIN_LCD_LED);
+JCR_ST7796 tft(PIN_LCD_CS, PIN_LCD_RS, PIN_LCD_RST, PIN_LCD_LED, LCD_IPS != 0);
 JCR_FT6336 touch(Wire1, PIN_CTP_SDA, PIN_CTP_SCL, PIN_CTP_RST, PIN_CTP_INT);
 JCR_Text   gfxText(tft);
 
@@ -96,16 +145,31 @@ void loop1() {
   if (!next) next = micros();
   if ((int32_t)(micros() - next) >= 0) {
     next += TICK_US;
-    if ((int32_t)(micros() - next) > (int32_t)(TICK_US * 4)) next = micros() + TICK_US;
+    if ((int32_t)(micros() - next) > (int32_t)(TICK_US * 4)) {
+      next = micros() + TICK_US;
+      gTickOverruns++;
+    }
     samplerTick(serviceTouch);      /* touch serviced between ADC channels */
   }
 }
 
 /* ============================ CORE 0 — the UI ============================ */
+static void telemetryTick();
+static void serialKeys();
 static int8_t   gPressedId     = -1;
 static ScreenId gPressedScreen = SCR_HOME;
 static int16_t  gDownX = 0, gDownY = 0;
 static uint32_t gDownMs = 0;
+
+/* ---- responsiveness harness ----
+ * Latency is micros() at dispatch minus the event's core-1 timestamp: the
+ * time a registered press waited for core 0 to notice. It is the one number
+ * that separates "taps are reacted to late" from "taps are not registered".
+ * All of these are per telemetry window (1 s) and shown in Dev Mode. */
+uint32_t gLatUsAvg = 0, gLatUsMax = 0, gLoopUsMax = 0;
+static uint32_t sLatSum = 0, sLatN = 0;
+static bool     sTelemetry = false;
+static bool     sLoad = false;          /* synthetic core-0 load           */
 
 /* Dispatch fires on the PRESS edge, which is what makes the UI feel
  * immediate. gPressedScreen guards the matching release: if the press
@@ -114,6 +178,9 @@ static void pumpTouchEvents() {
   JCRTouchEvent ev;
   while (touch.popEvent(ev)) {
     if (ev.type == JCR_TOUCH_DOWN) {
+      uint32_t lat = micros() - ev.atMicros;
+      sLatSum += lat; sLatN++;
+      if (lat > gLatUsMax) gLatUsMax = lat;
       gDownX = ev.x; gDownY = ev.y; gDownMs = millis();
       int8_t id = hitTestScreen(gScreen, ev.x, ev.y);
       if (id >= 0) {
@@ -141,6 +208,14 @@ void setup() {
   analogReadResolution(12);
   Serial.begin(115200);
 
+  /* Settings before anything draws — the palette and the filter window both
+   * come out of it. escBegin() parks the ESC pin LOW without engaging the PWM
+   * slice, so a reset mid-test never comes back under throttle. */
+  settingsBegin();
+  themeApply(gSet.theme);
+  settingsApplyFilter();
+  escBegin();
+
   tft.setSPIPins(PIN_SCK, PIN_MOSI, PIN_MISO);
   if (!tft.begin(SPI_HZ, LCD_ROTATION)) {
     /* Only fails if the scanline buffer could not be allocated — without it
@@ -151,8 +226,7 @@ void setup() {
   }
   gfxText.setFont(JCR_Font5x7);
 
-  Serial.println(F("Logging Current Meter UI  v3.0 (FABLE)"));
-  checkTargetOverlaps();
+  /* Nothing is printed here on purpose — see the announce block in loop(). */
 
   goTo(SCR_HOME);
   gCoreReady = true;      /* release core 1 last */
@@ -168,19 +242,125 @@ void loop() {
     gLoopUsAvg = gLoopUsAvg
         ? (uint32_t)(gLoopUsAvg + ((int32_t)dtUs - (int32_t)gLoopUsAvg) / 16)
         : dtUs;
+    if (dtUs > gLoopUsMax) gLoopUsMax = dtUs;
   }
   lastLoopUs = nowUs;
 
+  /* Announce on first serial connection, not from setup(). USB CDC only
+   * enumerates after setup() has already started, so a banner printed there
+   * goes to a port the host has not opened yet and is lost — which reads as
+   * "the firmware isn't running" when it is. Announcing here also means
+   * opening the monitor at any time reports which build is on the board,
+   * without needing a reset. */
+  static bool announced = false;
+  if (!announced && Serial) {
+    announced = true;
+    /* Everything in this project's history so far was written on one day, so
+     * a date alone does not identify a build. The compiler's own timestamp
+     * does, and costs nothing. */
+    Serial.println(F("Logging Current Meter UI  v3.1c (FABLE)"));
+    Serial.println(F("built " __DATE__ " " __TIME__));
+    Serial.println(F("keys: r reset stats | d telemetry | t touch reinit | L load | f filter | e esc"));
+    Serial.printf("touch: chip 0x%02X fw 0x%02X vendor 0x%02X %s\n",
+                  touch.chipId(), touch.firmwareId(), touch.vendorId(),
+                  touch.ok() ? "ok" : "INIT FAILED");
+    Serial.printf("settings: %s  theme=%u  filter=%u samples (%ums)\n",
+                  settingsLoadedFromFlash() ? "loaded from flash" : "defaults",
+                  (unsigned)gSet.theme,
+                  (unsigned)FILTER_SAMPLES[gSet.filterIndex],
+                  (unsigned)filterWindowMs(gSet.filterIndex));
+    checkTargetOverlaps();
+  }
+
   pumpTouchEvents();      /* never skipped, however slow the frame */
+  escTick();              /* auto-cycle state machine — never blocks       */
+  escBarTick();           /* the armed strip, on whichever screen is up    */
   tickScreen(gScreen);
   updateToast();
 
-  if (Serial.available()) {
-    char c = Serial.read();
-    if (c == 'r' || c == 'R') {
-      touch.resetStats();
-      gDevTaps = 0;
+  /* Synthetic load: ~60 ms of real SPI traffic per loop — the same pixel
+   * count as a full-screen fill, which is worse than any frame the real UI
+   * produces — but painted over the 4 px top strip sixty times so the screen
+   * stays usable. If the fade reproduces faster with this on, it is core-0
+   * sensitivity; if not, core-0 load is ruled out. */
+  if (sLoad) {
+    for (uint8_t i = 0; i < 60; i++) tft.fillRect(0, 0, tft.width(), ESC_BAR_H + 1, COL_GRID);
+    escBarPaint();
+  }
+
+  telemetryTick();
+  serialKeys();
+}
+
+/* ---- once-per-second telemetry --------------------------------------- */
+static void telemetryTick() {
+  static uint32_t lastMs = 0;
+  uint32_t now = millis();
+  if (now - lastMs < 1000) return;
+  lastMs = now;
+
+  JCRTouchStats s;  touch.getStats(s);
+  gLatUsAvg = sLatN ? (sLatSum / sLatN) : 0;
+
+  /* availableForWrite() guard: a monitor that is attached but not draining
+   * must never be able to stall core 0 — that would itself look exactly like
+   * the fault being chased. */
+  if (sTelemetry && Serial && Serial.availableForWrite() > 160) {
+    uint32_t uiHz = gLoopUsAvg ? (1000000UL / gLoopUsAvg) : 0;
+    Serial.printf("[tp] t=%lus TP=%lu UI=%lu fmax=%lums lat=%lu/%lums dn=%lu up=%lu ovf=%lu "
+                  "i2c=%lu drp=%lu jmp=%lu rng=%lu drift=%lu[%lu/%lu/%lu/%lu] svc=%luus "
+                  "tick=%lu/%luus reinit=%lu esc=%u heap=%luk\n",
+                  (unsigned long)(now / 1000), (unsigned long)s.sampleHz, (unsigned long)uiHz,
+                  (unsigned long)(gLoopUsMax / 1000),
+                  (unsigned long)(gLatUsAvg / 1000), (unsigned long)(gLatUsMax / 1000),
+                  (unsigned long)s.downs, (unsigned long)s.ups, (unsigned long)s.overflows,
+                  (unsigned long)s.i2cErrors, (unsigned long)s.dropouts,
+                  (unsigned long)s.jumpGlitches, (unsigned long)s.rangeGlitches,
+                  (unsigned long)s.regDrift,
+                  (unsigned long)s.driftByReg[0], (unsigned long)s.driftByReg[1],
+                  (unsigned long)s.driftByReg[2], (unsigned long)s.driftByReg[3],
+                  (unsigned long)s.serviceUsMax,
+                  (unsigned long)gTickOverruns, (unsigned long)gTickUsMax,
+                  (unsigned long)s.reinits, (unsigned)escArmed(),
+                  (unsigned long)(rp2040.getFreeHeap() / 1024));
+  }
+
+  /* Per-window maxima reset AFTER the line so Dev Mode and serial agree. */
+  gLoopUsMax = 0; gLatUsMax = 0; sLatSum = 0; sLatN = 0;
+  touch.resetServiceMax();
+  gTickMaxResetReq = true;
+}
+
+/* ---- bench keys ------------------------------------------------------- */
+static void serialKeys() {
+  if (!Serial.available()) return;
+  char c = (char)Serial.read();
+  switch (c) {
+    case 'r': case 'R':
+      touch.resetStats(); gDevTaps = 0; gTickOverruns = 0;
       Serial.println(F("[touch stats reset]"));
-    }
+      break;
+    case 'd': case 'D':
+      sTelemetry = !sTelemetry;
+      Serial.printf("[telemetry %s]\n", sTelemetry ? "on" : "off");
+      break;
+    case 't': case 'T':
+      touch.requestReinit();
+      Serial.println(F("[touch reinit requested - core 1 will restart the controller]"));
+      break;
+    case 'l': case 'L':
+      sLoad = !sLoad;
+      Serial.printf("[synthetic core-0 load %s]\n", sLoad ? "ON" : "off");
+      break;
+    case 'f': case 'F':
+      gSet.filterIndex = gSet.filterIndex ? 0 : (FILTER_OPTION_COUNT - 1);
+      settingsApplyFilter();
+      Serial.printf("[filter %u samples]\n", (unsigned)gFilterSamples);
+      break;
+    case 'e': case 'E':
+      if (escArmed()) escArm(false); else { escSetPulse(1500); escArm(true); }
+      Serial.printf("[esc %s]\n", escArmed() ? "ARMED 1500us" : "off");
+      break;
+    default: break;
   }
 }

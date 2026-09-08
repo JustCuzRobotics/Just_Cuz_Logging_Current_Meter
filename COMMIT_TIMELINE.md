@@ -8,6 +8,119 @@ notes with light editing.
 
 <!-- Newest entries go directly below this line. -->
 
+## v3.1c — 2026-09-08
+
+### firmware: v3.1c — Test Mode, Settings, themes, V/I filter, touch harness
+
+**Why:** v3.0 was confirmed on hardware (TP 200 Hz, V/T chips working), and four things
+followed from bench use. The Calibrate screen only displayed compile-time constants and
+did not earn a tile. Test Mode — ESC signal generation with configurable cycling — is the
+board's namesake feature and was missing. The readings are noise-prone and needed a
+tunable filter. And the theme did not read as dark, which turned into a long detour
+(see the library entry below: the display was colour-inverted the whole time). On top of
+that, touch responsiveness was reported fading after a minute or two of use, so the
+build also carries the instrumentation to find out why.
+
+**Changes**
+
+- `EscOut.h/.cpp` — new. ESC servo signal on `PIN_ESC_SIG` (GP1, added to `Config.h`) via
+  the RP2040 PWM slice: `analogWriteRange(periodUs)` makes the duty value the pulse width
+  in microseconds. Manual set point 1000–2000 µs, frame period 5–20 ms, and a
+  `millis()`-driven auto-cycle between two pulses with independent dwells. Output is a
+  plain LOW pin until armed, disarming returns it to LOW rather than a zero-width frame,
+  and any reset stops it.
+- `Settings.h/.cpp` — new. Theme, filter index, ESC period and cycle parameters persisted
+  by EEPROM emulation with magic, version, size and checksum, plus a range guard; anything
+  implausible falls back to defaults. **Save is explicit** because an RP2040 flash commit
+  halts both cores for a few ms. `settingsSave()` always stores the idle pulse regardless
+  of the live set point, so a board never boots under throttle.
+- `Sampler.h/.cpp` — linear weighted moving average (weights 1..N, newest heaviest) on V
+  and I, selectable OFF/2/4/6/8/10/15/20 samples (26–263 ms at the 13.158 ms tick). Applied
+  to the displayed numbers and the graph only. **Peaks stay raw**, screened by a
+  physical-plausibility gate (≤160 A, ≤70 V) rather than a median: simulation showed
+  median-of-3 discarding a genuine one-tick 100 A spike, which is exactly the event the
+  instrument exists to catch. Energy integrates raw. Also core-1 health counters (tick
+  overruns, longest tick).
+- `Theme.h/.cpp` — the `COL_*` macros now dereference a runtime `Palette`, so switching
+  theme is a pointer assignment plus repaint and no screen file changed. `PAL_DARK` is
+  minimal-ink on pure black with bright borders; `PAL_CLASSIC` is navy built from real RGB
+  (the v3.0 ground `0x0020` was the green LSB in RGB565, not blue).
+- `ScreenTest.cpp` — new. Manual pulse with ±50/±10 steppers, frame period, cycle low/high
+  pulse and dwells, start/stop. Status field doubles as the cycle countdown.
+- `ScreenSettings.cpp` — new. Theme toggle, filter stepper (sample count in the box,
+  window in ms on the caption line), calibration dump to serial (what `ScreenCal.cpp` used
+  to draw — that file is deleted), Save, Dev Mode.
+- `ScreenHome.cpp` — tiles are Live · Graph / Log · Test Mode · Settings; Dev moves under
+  Settings. `ScreenDev.cpp` — theme toggle, the harness readouts (tap latency avg/max,
+  worst frame, per-register drift, service max, tick health, `TP STALL` marker), and the
+  crosshair now restores the chrome it drags across instead of scraping it.
+- `Widgets.h/.cpp` — `drawStepBtn` draws +/- as filled bars sized from the box (a 5x7 glyph
+  in a 44 px button was a speck), `drawStepperBox`, `t5Centered`, and the 4 px amber
+  `escBar` along the top edge of every screen while the output is armed — placed there
+  because every screen already spends its top corners and a motor warning must never be
+  crowded out. Painted centrally in `paintScreen()` so a toast repaint cannot lose it.
+- `Layout.h` — targets for Test (17) and Settings (7), a second Dev target, ESC bar height.
+  `checkTargetOverlaps()` covers all six screens; verified offline as well: no hit-rect
+  overlaps, no visual-rect overlaps, nothing off-screen.
+- `RussoOne13/16/22.h` — regenerated. The originals had been built with a reduced
+  character set: `+`, `/`, `,` and `%` were zero-width and silently dropped, which is why
+  the step buttons first read "-50 -10 -10 -50". Regenerated with those glyphs; the
+  parentheses were left out deliberately because they would have raised every font's
+  height and shifted every layout. Heights are unchanged at 16/20/26.
+- `Config.h` — `PIN_ESC_SIG 1`, `LCD_IPS 1`.
+- `logging_current_meter_FABLE.ino` — settings load, theme apply, `escBegin()`, `escTick()`
+  and `escBarTick()` in the loop, the once-per-second `[tp]` telemetry line (guarded by
+  `availableForWrite()` so a stalled monitor can never block core 0), bench keys `d t L f
+  e` alongside `r`, and a `built <date> <time>` banner line because every version in this
+  project's history so far carries the same date.
+- `README.md`, `firmware/README.md` — feature list, module layout, serial keys, the IPS
+  inversion note, and the junction recipe for the library.
+
+**Verification:** `arduino-cli compile --fqbn rp2040:rp2040:waveshare_rp2040_zero` against
+arduino-pico 6.1.0: 102,828 bytes flash (4%), 17,160 bytes RAM (6%). Flashed and
+bench-tested through v3.1b on the device: dark theme confirmed good, TP 200 Hz, UI 45 kHz,
+tap latency 0 ms, service max 252 µs, one tick overrun in 39 minutes with a 7.9 ms worst
+tick against a 13.2 ms budget. Test Mode ESC output not yet scoped. v3.1c itself (per-register
+drift, navy palette, Test Mode re-spacing, crosshair repair) compiles clean and is not yet
+flashed.
+
+**Notes:** The touch fade has a lead. The register watchdog in this build found the
+FT6336U's mode register `0xA4` not holding its value 47 times in 39 minutes and rewrote it
+each time — consistent with the fade being controller state drift, and with the report that
+touch "works a lot better" with the watchdog in. The per-register counters added here are
+what will say whether all four registers move together (the part resetting — power or ESD on
+the FPC) or A4 alone. Design decisions taken for v3.2 and not yet built: an ESC slider,
+tap-to-jump anywhere; swipe-back recognised only when the swipe starts in dead space, so
+buttons keep firing on the press edge.
+
+### JCR_TouchScreen 1.1.0: fix IPS colour inversion, add controller watchdog and reinit
+
+**Why:** Every colour this driver produced from v2.0 to v3.1a displayed as its
+complement, and nobody noticed because a dark-on-black UI inverted to a light one that
+merely looked "washed out". The old Arduino_GFX firmware constructed the panel with
+`ips = true`, which sends `INVON`; this driver's init table ended with `INVOFF`. Every
+palette judgement in that period was made on the inverted image. Separately, the
+touch-fade investigation needed the driver to report on the controller's own health.
+
+**Changes**
+
+- `src/JCR_ST7796.h` — constructor gains `bool ips = true`; the init table ends with `0x21`
+  when set, `0x20` otherwise. Default on because the module the library is documented
+  against is IPS; TN panels pass false. Header comment explains the symptom.
+- `src/JCR_FT6336.h/.cpp` — a register watchdog on the servicing core: every 500 ms it
+  reads back `0x00`, `0x86`, `0x88`, `0xA4`, and any that no longer holds what `begin()`
+  wrote is counted (`regDrift`, `driftByReg[4]`, `lastDriftReg`) and rewritten. Per-sample
+  transaction timing (`serviceUsMax`, cleared per window by `resetServiceMax()`).
+  `requestReinit()` re-runs `begin()` on the servicing core from a request flag, with the
+  I2C bus brought up only once so a reinit cannot trip the core's pin-reassignment panic.
+- `README.md` — IPS inversion section; the three new counters documented.
+- `library.properties` — 1.1.0.
+
+**Verification:** All three examples compile clean (70,076 / 70,492 / 70,644 bytes). On
+hardware, the inversion fix is confirmed — black is black — and the watchdog produced its
+first data (47 drifts on `0xA4` in 39 minutes, see the firmware entry above).
+
+
 ## v3.0 — 2026-09-08
 
 ### firmware: extract JCR_TouchScreen library and rebuild the UI as modules

@@ -3,7 +3,7 @@
 | Sketch | Purpose |
 |---|---|
 | `display_bringup/` | Full board diagnostic and calibration tool. Exercises all 20 usable GPIO, reports pass/fail per subsystem with net names, and fits the analog calibration constants |
-| `logging_current_meter_FABLE/` | **The current UI.** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, read-only calibration view, touch diagnostics. Split into one module per concern; built on `libraries/JCR_TouchScreen/` |
+| `logging_current_meter_FABLE/` | **The current UI (v3.1c).** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, Test Mode (ESC signal + auto-cycle), Settings with flash persistence, two themes, tunable V/I filter, touch diagnostics with a serial telemetry harness. One module per concern; built on `libraries/JCR_TouchScreen/` |
 | `FABLE_DEV_TEST_SCREEN/` | Minimal touch-reliability test firmware. The quickest way to prove a panel and its touch mapping in isolation |
 | `logging_current_meter_ui/` | Superseded predecessor (v1.7, Arduino_GFX). Kept as a reference until the new UI is bench-verified |
 | `touch_dev_test/` | Earlier touch experiment. Superseded; not a reference |
@@ -125,9 +125,22 @@ stack lives in `libraries/JCR_TouchScreen/`, which must be on the Arduino librar
 before this sketch will build:
 
 ```
-copy  libraries\JCR_TouchScreen  ->  Documents\Arduino\libraries\JCR_TouchScreen
 arduino-cli compile --fqbn rp2040:rp2040:waveshare_rp2040_zero firmware/logging_current_meter_FABLE
 ```
+
+Rather than copying the library into the sketchbook and forgetting to re-copy it, make the
+sketchbook entry a junction to the repo copy — then every library edit is what the IDE
+compiles:
+
+```powershell
+New-Item -ItemType Junction -Path "$HOME\Documents\Arduino\libraries\JCR_TouchScreen" `
+         -Target "<repo>\libraries\JCR_TouchScreen"
+```
+
+**The panel is IPS and needs display inversion on.** `Config.h` sets `LCD_IPS 1`, which the
+library turns into `INVON`. Without it every colour displays as its complement — black is
+white — which is exactly how v2.0 through v3.1a looked, and why the themes made no sense
+until v3.1b.
 
 ### Why touch is arranged the way it is
 
@@ -156,9 +169,30 @@ Four rules keep that true as features are added. They are restated in the sketch
 
 One file per concern. `Config.h` holds the pin map, bus rates and **the calibration
 constants** — that is the file to edit after running `display_bringup`'s `v`/`i`/`n`
-routines. `Layout.h` holds every pixel coordinate, so retargeting to another panel size is
-one file. `Sampler.*` is the core-1 ADC and the graph ring buffer; `Widgets.*` the button
-chrome and cached fields; `Screens.*` navigation, with one `Screen*.cpp` per screen.
+routines (Settings → DUMP prints the current ones over serial). `Layout.h` holds every
+pixel coordinate and touch target, so retargeting to another panel size is one file.
+`Sampler.*` is the core-1 ADC, the V/I weighted-moving-average filter and the graph ring;
+`Settings.*` the user settings and their EEPROM persistence (explicit Save only — a flash
+write halts both cores for a few ms); `EscOut.*` the ESC servo signal on GP1 (hardware
+PWM, never bit-banged, OFF at boot, idle pulse is all that ever persists); `Theme.*` the
+two palettes behind the `COL_*` macros; `Widgets.*` the button chrome and cached fields;
+`Screens.*` navigation, with one `Screen*.cpp` per screen.
+
+### Serial keys (115200)
+
+| key | does |
+|---|---|
+| `d` | once-per-second `[tp]` telemetry line: touch rate, UI rate, worst frame, tap latency, every touch counter, controller register drift per register, core-1 tick health |
+| `r` | reset the touch counters |
+| `t` | re-initialise the touch controller from core 1 |
+| `L` | synthetic ~60 ms core-0 load per loop |
+| `f` | filter 0 ↔ 20 samples |
+| `e` | ESC output on/off at 1500 µs |
+
+The `[tp]` line is the touch-investigation tool: `TP` dropping means core 1 is starved,
+`lat` climbing with `TP` steady means core 0 is slow, `dn` not counting on a real tap means
+the controller stopped reporting, and `drift=[a/b/c/d]` counts the controller's four
+configuration registers found not holding their values (rewritten automatically).
 
 Fonts are generated locally by `make_fonts.py` from a TTF — Russo One here, which is SIL
 OFL, so the generator ships rather than the font.

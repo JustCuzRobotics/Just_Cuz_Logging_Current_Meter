@@ -13,18 +13,24 @@ static void drawHomeGlyph(uint8_t id, int16_t cx, int16_t cy, uint16_t color) {
       tft.drawLine(cx + 4,  cy + 2, cx + 12, cy - 8, color);
       break;
     case HOME_LOG:   tft.drawRect(cx - 7, cy - 7, 14, 14, color); break;
-    case HOME_CAL:
+    case HOME_TEST:  /* a servo pulse train — low, one narrow high, low */
+      tft.drawFastHLine(cx - 13, cy + 6, 6, color);
+      tft.drawFastVLine(cx - 7,  cy - 7, 14, color);
+      tft.drawFastHLine(cx - 7,  cy - 7, 5, color);
+      tft.drawFastVLine(cx - 3,  cy - 7, 14, color);
+      tft.drawFastHLine(cx - 3,  cy + 6, 9, color);
+      tft.drawFastVLine(cx + 6,  cy - 7, 14, color);
+      tft.drawFastHLine(cx + 6,  cy - 7, 5, color);
+      tft.drawFastVLine(cx + 10, cy - 7, 14, color);
+      tft.drawFastHLine(cx + 10, cy + 6, 4, color);
+      break;
+    case HOME_SETTINGS:  /* the old Calibrate gear, reused for settings */
       tft.drawCircle(cx, cy, 7, color);
       for (uint8_t k = 0; k < 6; k++) {
         float a = k * 3.14159f / 3.0f;
         tft.drawLine(cx + (int16_t)(cosf(a) * 9),  cy + (int16_t)(sinf(a) * 9),
                      cx + (int16_t)(cosf(a) * 12), cy + (int16_t)(sinf(a) * 12), color);
       }
-      break;
-    case HOME_DEV:
-      tft.drawFastHLine(cx - 10, cy, 21, color);
-      tft.drawFastVLine(cx, cy - 10, 21, color);
-      tft.drawCircle(cx, cy, 4, color);
       break;
   }
 }
@@ -42,7 +48,7 @@ static void paintHomeTile(uint8_t id, bool pressed) {
   drawHomeGlyph(id, r.cx(), r.y + 32, glyphCol);
 
   /* The two wide tiles take the large face; the narrow three use the small
-   * one so "CALIBRATE" fits inside 137 px. */
+   * one so "TEST MODE" fits inside 137 px. */
   bool big = (id == HOME_LIVE || id == HOME_GRAPH);
   tRussoCentered(big ? RUSSO22 : RUSSO13, r.cx(), r.y + (big ? 50 : 56),
                  HOME_LABEL[id], textCol, fill);
@@ -62,7 +68,7 @@ void homeDispatch(int8_t id) {
   switch (id) {
     case HOME_LIVE:  goTo(SCR_LIVE);  break;
     case HOME_GRAPH: goTo(SCR_GRAPH); break;
-    case HOME_CAL:   goTo(SCR_CAL);   break;
-    case HOME_DEV:   goTo(SCR_DEV);   break;
+    case HOME_TEST:     goTo(SCR_TEST);     break;
+    case HOME_SETTINGS: goTo(SCR_SETTINGS); break;
   }
 }

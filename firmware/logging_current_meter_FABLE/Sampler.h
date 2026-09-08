@@ -44,3 +44,36 @@ extern volatile uint16_t gRingHead;
  * ~5 ms oversampling burst can never delay a touch sample by more than one
  * channel (~1.3 ms). */
 void samplerTick(void (*interleave)() = nullptr);
+
+/* ---- reading filter -------------------------------------------------------
+ * Three different sources feed three different consumers, because they want
+ * different things:
+ *
+ *   displayed numbers, graph trace   linear WMA over N samples (readability)
+ *   peaks                            raw, median-of-3        (fidelity)
+ *   energy / mAh                     raw                     (exactness)
+ *
+ * The WMA weights the newest sample heaviest (weights 1..N), so it settles a
+ * noisy reading with far less lag than a flat average of the same width.
+ *
+ * Peaks deliberately skip it. Current noise here is about 0.2 A against peaks
+ * of 10-100 A, so there is nothing for a filter to protect a peak from, and
+ * smoothing would only cost real spike height. Median-of-3 is there instead:
+ * it removes an isolated bad sample outright while passing anything lasting
+ * two ticks or more untouched. The sample worth removing is not ADC noise but
+ * the ratiometric divide — iRatio() divides by raw5, so a momentary sag on the
+ * 5 V rail inflates one current reading. Any real event (stall, prop strike,
+ * spin-up) lasts far longer than 13 ms, so nothing genuine is lost.
+ *
+ * Core 0 writes the window, core 1 reads it: one writer per direction, the
+ * same rule the command flags follow. */
+extern volatile uint8_t gFilterSamples;   /* 0 = off, else 2..20 */
+
+/* Core-1 health, for the touch-responsiveness telemetry. Written by core 1,
+ * read by core 0. tickOverruns counts the resync branch in loop1() — the
+ * sampler fell more than four ticks behind; tickUsMax is the longest single
+ * samplerTick() including its interleaved touch services. If touch service
+ * rate ever drops, these say whether core 1 was the reason. */
+extern volatile uint32_t gTickOverruns;
+extern volatile uint32_t gTickUsMax;
+extern volatile bool     gTickMaxResetReq;   /* core 0 raises, core 1 clears */

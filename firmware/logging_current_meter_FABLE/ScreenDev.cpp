@@ -15,6 +15,8 @@
 #include "Screens.h"
 #include "Widgets.h"
 #include "Config.h"
+#include "Settings.h"
+#include "Sampler.h"
 
 extern JCR_FT6336 touch;
 
@@ -34,9 +36,28 @@ static void drawCross(int16_t x, int16_t y, uint16_t color) {
   tft.fillRect(x - 1, y - 14, 3, 29, color);
 }
 
-void paintDevOnce() {
-  tft.fillScreen(COL_BG);
-  drawBackBtn(DEV_T[0].vis, false);
+/* The theme toggle is duplicated here as well as in Settings because Dev
+ * Mode is where the palette actually gets judged — every colour in the theme
+ * is on this screen at once. Switching from here does not save; Settings is
+ * where a choice is committed to flash. */
+static void drawDevThemeBtn(bool pressed) {
+  const JCRRect &r = DEV_T[DEV_BTN_THEME].vis;
+  uint16_t fill = pressed ? COL_BOX_PRESSED : COL_BOX_FILL;
+  tft.fillRoundRect(r.x, r.y, r.w, r.h, 5, fill);
+  tft.drawRoundRect(r.x, r.y, r.w, r.h, 5, COL_BOX_BORDER);
+  char buf[24];
+  snprintf(buf, sizeof buf, "THEME: %s",
+           themeCurrent() == THEME_DARK ? "DARK" : "CLASSIC");
+  t5(r.x + 8, r.y + (r.h - 8) / 2, buf, COL_TEXT_HI, fill);
+}
+
+/* Everything static. Split out so the crosshair can restore what it dragged
+ * across: erasing its footprint with a background rect used to scrape
+ * whatever chrome was underneath, which on a screen full of diagnostics
+ * meant the diagnostics. */
+static void paintDevChrome() {
+  drawBackBtn(DEV_T[DEV_BTN_BACK].vis, false);
+  drawDevThemeBtn(false);
   tRussoCentered(RUSSO16, tft.width() / 2, 5, "DEV MODE", COL_TEXT_HI, COL_BG);
 
   /* Faint outer outline = the real hit rect; solid inner = the drawn box. */
@@ -47,22 +68,38 @@ void paintDevOnce() {
     tft.drawRect(v.x, v.y, v.w, v.h, DEV_TARGETS[i].color);
     t5(DEV_TARGETS[i].lx, DEV_TARGETS[i].ly, DEV_TARGETS[i].label, DEV_TARGETS[i].color, COL_BG);
   }
-  t5(110, 300, "TAP/DRAG ANYWHERE. CROSSHAIR = GROUND TRUTH.", COL_TEXT_HI, COL_BG);
+  t5(152, 290, "TAP/DRAG ANYWHERE.", COL_TEXT_HI, COL_BG);
+  t5(152, 302, "CROSSHAIR = GROUND TRUTH.", COL_TEXT_HI, COL_BG);
+}
+
+void paintDevOnce() {
+  tft.fillScreen(COL_BG);
+  paintDevChrome();
   updateDevTick(true);
 }
 
 void updateDevTick(bool forceClear) {
-  static char    cache[8][40] = { "", "", "", "", "", "", "", "" };
+  static char    cache[12][40];
   static int16_t lastX = -100, lastY = -100;
   static bool    wasDown = false;
   if (forceClear) {
-    for (uint8_t i = 0; i < 8; i++) cache[i][0] = 0;
+    for (uint8_t i = 0; i < 12; i++) cache[i][0] = 0;
     lastX = lastY = -100;
     wasDown = false;
   }
 
   JCRTouchPoint p;  touch.getTouch(p);
   JCRTouchStats s;  touch.getStats(s);
+
+  /* Crosshair first, so the text pass below repaints anything it disturbed.
+   * Erase the old footprint, restore the static chrome under it, and mark
+   * every cached field dirty — the text pass then redraws them all, which is
+   * a dozen short strings at Dev cadence and only while a finger moves. */
+  if (wasDown && (!p.down || lastX != p.x || lastY != p.y)) {
+    drawCross(lastX, lastY, COL_BG);
+    paintDevChrome();
+    for (uint8_t i = 0; i < 12; i++) cache[i][0] = 0;
+  }
 
   char buf[40];
   const int16_t X = 200;
@@ -93,13 +130,42 @@ void updateDevTick(bool forceClear) {
            (unsigned long)s.dropouts, (unsigned long)s.overflows);
   field5(X, 176, 34, 1, COL_TEXT_HI, COL_BG, buf, cache[7]);
 
-  /* Erase only the crosshair's own last footprint. Dragging it across static
-   * chrome scrapes a sliver — a contained cosmetic artefact on a debug
-   * screen, cleared on re-entry. */
-  if (wasDown && (!p.down || lastX != p.x || lastY != p.y)) drawCross(lastX, lastY, COL_BG);
+  /* Responsiveness harness — what to read when touch has faded. */
+  snprintf(buf, sizeof buf, "LAT %lu/%luMS  FMAX %luMS",
+           (unsigned long)(gLatUsAvg / 1000), (unsigned long)(gLatUsMax / 1000),
+           (unsigned long)(gLoopUsMax / 1000));
+  field5(X, 196, 30, 1, COL_AMP, COL_BG, buf, cache[8]);
+  /* Drift per register: 00 / 86 / 88 / A4. All four together = resets. */
+  snprintf(buf, sizeof buf, "DRIFT %lu/%lu/%lu/%lu SVC %luUS RI %lu",
+           (unsigned long)s.driftByReg[0], (unsigned long)s.driftByReg[1],
+           (unsigned long)s.driftByReg[2], (unsigned long)s.driftByReg[3],
+           (unsigned long)s.serviceUsMax, (unsigned long)s.reinits);
+  field5(X, 212, 34, 1, COL_AMP, COL_BG, buf, cache[9]);
+  snprintf(buf, sizeof buf, "TICK OVR %lu MAX %luUS  UP %lus",
+           (unsigned long)gTickOverruns, (unsigned long)gTickUsMax,
+           (unsigned long)(millis() / 1000));
+  field5(X, 228, 34, 1, COL_AMP, COL_BG, buf, cache[10]);
+  /* The one-glance indicator: if service rate is off, nothing else matters. */
+  bool stall = (s.sampleHz && s.sampleHz < 190);
+  field5(X, 248, 22, 2, stall ? COL_DANGER : COL_VOLT, COL_BG,
+         stall ? "TP STALL" : "TP OK", cache[11]);
+
+  /* Draw the new crosshair last so it sits on top of the freshly drawn text. */
   if (p.down) { drawCross(p.x, p.y, COL_AMP); lastX = p.x; lastY = p.y; }
   wasDown = p.down;
 }
 
-void devSetPressed(int8_t id, bool pressed) { (void)id; drawBackBtn(DEV_T[0].vis, pressed); }
-void devDispatch(int8_t id) { (void)id; goTo(SCR_HOME); }
+void devSetPressed(int8_t id, bool pressed) {
+  if (id == DEV_BTN_THEME) drawDevThemeBtn(pressed);
+  else                     drawBackBtn(DEV_T[DEV_BTN_BACK].vis, pressed);
+}
+
+void devDispatch(int8_t id) {
+  if (id == DEV_BTN_THEME) {
+    gSet.theme = (uint8_t)((themeCurrent() + 1) % THEME_COUNT);
+    themeApply(gSet.theme);
+    paintScreen(SCR_DEV);
+    return;
+  }
+  goTo(SCR_HOME);
+}

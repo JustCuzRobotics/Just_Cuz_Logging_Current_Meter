@@ -9,9 +9,14 @@ void paintScreen(ScreenId s) {
     case SCR_HOME:  paintHomeOnce();  break;
     case SCR_LIVE:  paintLiveOnce();  break;
     case SCR_GRAPH: paintGraphOnce(); break;
-    case SCR_CAL:   paintCalOnce();   break;
+    case SCR_TEST:     paintTestOnce();     break;
+    case SCR_SETTINGS: paintSettingsOnce(); break;
     case SCR_DEV:   paintDevOnce();   break;
   }
+  /* Every full repaint clears the top edge, so the armed strip is restored
+   * here rather than in fifteen places. This also covers a toast expiring,
+   * which repaints through this same function. */
+  escBarPaint();
 }
 void goTo(ScreenId s) { gScreen = s; paintScreen(s); }
 
@@ -26,8 +31,9 @@ int8_t hitTestScreen(ScreenId s, int16_t x, int16_t y) {
     case SCR_HOME:  return hitTargets(HOME_T,  HOME_N,       x, y);
     case SCR_LIVE:  return hitTargets(LIVE_T,  LIVE_BTN_N,   x, y);
     case SCR_GRAPH: return hitTargets(GRAPH_T, GRAPH_BTN_N,  x, y);
-    case SCR_CAL:   return hitTargets(CAL_T,   1,            x, y);
-    case SCR_DEV:   return hitTargets(DEV_T,   1,            x, y);
+    case SCR_TEST:     return hitTargets(TEST_T, TEST_BTN_N, x, y);
+    case SCR_SETTINGS: return hitTargets(SET_T,  SET_BTN_N,  x, y);
+    case SCR_DEV:   return hitTargets(DEV_T,   DEV_BTN_N,    x, y);
   }
   return -1;
 }
@@ -37,7 +43,8 @@ void dispatch(ScreenId s, int8_t id) {
     case SCR_HOME:  homeDispatch(id);  break;
     case SCR_LIVE:  liveDispatch(id);  break;
     case SCR_GRAPH: graphDispatch(id); break;
-    case SCR_CAL:   calDispatch(id);   break;
+    case SCR_TEST:     testDispatch(id);     break;
+    case SCR_SETTINGS: settingsDispatch(id); break;
     case SCR_DEV:   devDispatch(id);   break;
   }
 }
@@ -47,14 +54,16 @@ void setPressedVisual(ScreenId s, int8_t id, bool pressed) {
     case SCR_HOME:  homeSetPressed(id, pressed);  break;
     case SCR_LIVE:  liveSetPressed(id, pressed);  break;
     case SCR_GRAPH: graphSetPressed(id, pressed); break;
-    case SCR_CAL:   calSetPressed(id, pressed);   break;
+    case SCR_TEST:     testSetPressed(id, pressed);     break;
+    case SCR_SETTINGS: settingsSetPressed(id, pressed); break;
     case SCR_DEV:   devSetPressed(id, pressed);   break;
   }
 }
 
-/* Home and Calibrate have nothing that changes per tick. */
+/* Home has nothing that changes per tick. Test Mode does, but only because
+ * of the auto-cycle countdown, so it runs at the slow Dev cadence. */
 void tickScreen(ScreenId s) {
-  static uint32_t lastLive = 0, lastGraph = 0, lastDev = 0;
+  static uint32_t lastLive = 0, lastGraph = 0, lastDev = 0, lastTest = 0;
   uint32_t now = millis();
   switch (s) {
     case SCR_LIVE:
@@ -69,6 +78,9 @@ void tickScreen(ScreenId s) {
       break;
     case SCR_DEV:
       if (now - lastDev >= DEV_FRAME_MS) { lastDev = now; updateDevTick(); }
+      break;
+    case SCR_TEST:
+      if (now - lastTest >= DEV_FRAME_MS) { lastTest = now; updateTestTick(); }
       break;
     default: break;
   }
@@ -88,4 +100,7 @@ void checkTargetOverlaps() {
   warnOverlaps(HOME_T,  HOME_N,      "HOME");
   warnOverlaps(LIVE_T,  LIVE_BTN_N,  "LIVE");
   warnOverlaps(GRAPH_T, GRAPH_BTN_N, "GRAPH");
+  warnOverlaps(TEST_T,  TEST_BTN_N,  "TEST");
+  warnOverlaps(SET_T,   SET_BTN_N,   "SETTINGS");
+  warnOverlaps(DEV_T,   DEV_BTN_N,   "DEV");
 }

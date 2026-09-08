@@ -48,6 +48,30 @@ void drawBigValueChrome(const JCRRect &r);
 bool drawBigValueField(const JCRRect &r, uint16_t valColor, const char *valText,
                        const char *unitText, char *cache);
 
+/* ---- steppers ----
+ * drawStepBtn draws its + or - as filled bars rather than a font glyph. A
+ * 5x7 '+' in a 44 px button is a speck, and scaling a bitmap glyph up gets
+ * chunky fast; two rectangles stay crisp at any size and scale with the box,
+ * so the same call works for a 24 px chip and a 44 px stepper. */
+void drawStepBtn(const JCRRect &r, bool pressed, bool plus);
+
+/* ---- stepper value box: the readout between a - and a + button ---- */
+void drawStepperBox(const JCRRect &r, const char *text, uint16_t fg, char *cache);
+
+/* 5x7 text centred in a box — for labels that must not overflow, where a
+ * proportional font's width is a guess and 6*len*scale is not. */
+void t5Centered(const JCRRect &r, const char *s, uint16_t fg, uint16_t bg, uint8_t scale);
+
+/* ---- ESC armed indicator ----
+ * A 4 px amber strip along the top edge, on every screen, whenever the ESC
+ * output is live. It is a strip rather than a labelled badge because every
+ * screen already spends its top corners, and a warning that a motor may spin
+ * has to be somewhere it can never be crowded out. escBarPaint() draws the
+ * current state unconditionally; escBarTick() redraws only on a change and
+ * is cheap enough to call every frame. */
+void escBarPaint();
+void escBarTick();
+
 /* ---- toast: bottom-centre, timed, non-blocking ---- */
 void showToast(const char *msg);
 void updateToast();

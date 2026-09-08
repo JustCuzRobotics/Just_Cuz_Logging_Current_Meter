@@ -1,4 +1,6 @@
 #include "Widgets.h"
+#include "EscOut.h"
+#include <string.h>
 #include "Screens.h"
 
 void t5(int16_t x, int16_t y, const char *s, uint16_t fg, uint16_t bg, uint8_t scale) {
@@ -143,4 +145,54 @@ void updateToast() {
     gToastUntil = 0;
     paintScreen(gScreen);      /* repaints chrome AND forces a value refresh */
   }
+}
+
+
+void drawStepBtn(const JCRRect &r, bool pressed, bool plus) {
+  uint16_t fill = pressed ? COL_BOX_PRESSED : COL_BOX_FILL;
+  tft.fillRoundRect(r.x, r.y, r.w, r.h, 5, fill);
+  tft.drawRoundRect(r.x, r.y, r.w, r.h, 5, COL_BOX_BORDER);
+  /* Bar length is 55% of the box's short side, thickness an eighth of that,
+   * both forced odd-ish so the two bars share a centre pixel. */
+  int16_t s  = (r.w < r.h ? r.w : r.h);
+  int16_t len = (int16_t)(s * 55 / 100);
+  int16_t th  = (int16_t)(len / 4); if (th < 3) th = 3;
+  int16_t cx = r.cx(), cy = (int16_t)(r.y + r.h / 2);
+  tft.fillRect((int16_t)(cx - len / 2), (int16_t)(cy - th / 2), len, th, COL_TEXT_HI);
+  if (plus)
+    tft.fillRect((int16_t)(cx - th / 2), (int16_t)(cy - len / 2), th, len, COL_TEXT_HI);
+}
+
+void t5Centered(const JCRRect &r, const char *s, uint16_t fg, uint16_t bg, uint8_t scale) {
+  int16_t w = t5Width(s, scale);
+  t5((int16_t)(r.x + (r.w - w) / 2), (int16_t)(r.y + (r.h - 7 * scale) / 2), s, fg, bg, scale);
+}
+
+/* ------------------------------------------------------------------------
+ * Stepper readout. Same chrome as a mini stat box, but centred and cached so
+ * holding a + button repaints four digits rather than the whole row.
+ * ---------------------------------------------------------------------- */
+void drawStepperBox(const JCRRect &r, const char *text, uint16_t fg, char *cache) {
+  if (cache && strcmp(cache, text) == 0) return;
+  if (cache) { strncpy(cache, text, 15); cache[15] = 0; }
+  tft.fillRoundRect(r.x, r.y, r.w, r.h, 5, COL_BOX_FILL);
+  tft.drawRoundRect(r.x, r.y, r.w, r.h, 5, COL_BOX_BORDER);
+  tRussoCentered(RUSSO16, r.cx(), r.y + (r.h - RUSSO16.height) / 2, text, fg, COL_BOX_FILL);
+}
+
+/* ------------------------------------------------------------------------
+ * ESC armed strip.
+ * ---------------------------------------------------------------------- */
+void escBarPaint() {
+  tft.fillRect(0, 0, tft.width(), ESC_BAR_H, escArmed() ? COL_AMP : COL_BG);
+}
+
+void escBarTick() {
+  static bool wasArmed = false;
+  static bool first = true;
+  bool now = escArmed();
+  if (!first && now == wasArmed) return;
+  first = false;
+  wasArmed = now;
+  escBarPaint();
 }

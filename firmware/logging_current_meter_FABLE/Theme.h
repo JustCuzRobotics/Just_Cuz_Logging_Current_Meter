@@ -1,31 +1,57 @@
 /* ==========================================================================
- * Theme.h — colours and fonts. The dark tones are deliberately deeper than
- * a naive dark theme: on this panel a mid-slate box fill reads as a washed
- * light blue, so the fills sit just above the background and the borders do
- * the work of defining each box.
+ * Theme.h — the active palette, and the fonts.
  *
- * To go darker still, move BOX_FILL/BOX_PRESSED toward COL_BG. For more box
- * definition, brighten COL_BOX_BORDER.
+ * The COL_* names are macros that dereference the *current* palette rather
+ * than constants, so switching theme is a pointer assignment plus a repaint
+ * and no screen file needs to know themes exist. The extra indirection costs
+ * nothing next to the SPI write every colour ends up feeding.
+ *
+ * Two palettes. PAL_DARK is minimal-ink: background and box fill are both
+ * pure black and a box is defined only by its border and text. PAL_CLASSIC
+ * is the v3.0 palette with filled slate panels.
+ *
+ * A note for the record, because it shaped every palette decision before
+ * v3.1b: the display was colour-INVERTED from v2.0 until v3.1b (the IPS panel
+ * needs INVON and the driver sent INVOFF), so every "this looks washed out on
+ * the glass" judgement in that period was made on the complement of the
+ * palette. The panel was never the problem. Judge both palettes fresh.
  * ========================================================================*/
 #pragma once
 #include <JCR_TouchScreen.h>
 
-#define COL_BG              0x0020   /* #040408 near-black                 */
-#define COL_GRID            0x18E3   /* plot gridlines                     */
-#define COL_TEXT            0xDF3D
-#define COL_TEXT_HI         0xEF7E
-#define COL_VOLT            0x3F18   /* teal                               */
-#define COL_AMP             0xFD84   /* amber                              */
-#define COL_TEMP            0xFA73   /* magenta                            */
-#define COL_BOX_FILL        0x0882   /* deep slate                         */
-#define COL_BOX_BORDER      0x2A6B
-#define COL_BOX_PRESSED     0x1945   /* press / "on" feedback              */
-#define COL_DISABLED_FILL   0x0841
-#define COL_DISABLED_BORDER 0x2146
-#define COL_DISABLED_TEXT   0x4AAB
-#define COL_DANGER          0xFB4B
-#define COL_TOAST_BG        0x0861
-#define COL_TOAST_TEXT      0xFBEF
+struct Palette {
+  const char *name;
+  uint16_t bg, grid, text, textHi;
+  uint16_t volt, amp, temp;              /* channel accents — same in both  */
+  uint16_t boxFill, boxBorder, boxPressed;
+  uint16_t disabledFill, disabledBorder, disabledText;
+  uint16_t danger, toastBg, toastText;
+};
+
+extern const Palette PAL_DARK;      /* minimal ink: no filled panels        */
+extern const Palette PAL_CLASSIC;   /* the v3.0 palette                     */
+extern const Palette *gPal;         /* what everything below resolves to    */
+
+enum ThemeId : uint8_t { THEME_DARK = 0, THEME_CLASSIC = 1, THEME_COUNT = 2 };
+void themeApply(uint8_t id);        /* sets gPal; does NOT repaint          */
+uint8_t themeCurrent();
+
+#define COL_BG              (gPal->bg)
+#define COL_GRID            (gPal->grid)
+#define COL_TEXT            (gPal->text)
+#define COL_TEXT_HI         (gPal->textHi)
+#define COL_VOLT            (gPal->volt)
+#define COL_AMP             (gPal->amp)
+#define COL_TEMP            (gPal->temp)
+#define COL_BOX_FILL        (gPal->boxFill)
+#define COL_BOX_BORDER      (gPal->boxBorder)
+#define COL_BOX_PRESSED     (gPal->boxPressed)
+#define COL_DISABLED_FILL   (gPal->disabledFill)
+#define COL_DISABLED_BORDER (gPal->disabledBorder)
+#define COL_DISABLED_TEXT   (gPal->disabledText)
+#define COL_DANGER          (gPal->danger)
+#define COL_TOAST_BG        (gPal->toastBg)
+#define COL_TOAST_TEXT      (gPal->toastText)
 
 /* Russo One, rasterized by the library's extras/make_fonts.py. Russo One is
  * SIL Open Font Licensed; these headers are generated from it locally rather

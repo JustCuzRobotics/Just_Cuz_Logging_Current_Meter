@@ -26,7 +26,7 @@ struct Target { JCRRect vis; JCRRect hit; };
 
 /* ------------------------------------------------------------------ HOME --
  * Five tiles; hit rects grown 6 px per side, closing the 14 px gaps to 2. */
-enum { HOME_LIVE, HOME_GRAPH, HOME_LOG, HOME_CAL, HOME_DEV, HOME_N };
+enum { HOME_LIVE, HOME_GRAPH, HOME_LOG, HOME_TEST, HOME_SETTINGS, HOME_N };
 inline const Target HOME_T[HOME_N] = {
   { { 20,  44, 213, 121}, { 14,  38, 225, 133} },
   { {247,  44, 213, 121}, {241,  38, 225, 133} },
@@ -34,9 +34,9 @@ inline const Target HOME_T[HOME_N] = {
   { {171, 179, 137, 121}, {165, 173, 149, 133} },
   { {322, 179, 138, 121}, {316, 173, 150, 133} },
 };
-inline const char *const HOME_LABEL[HOME_N] = { "LIVE VIEW", "GRAPH", "LOG", "CALIBRATE", "DEV MODE" };
+inline const char *const HOME_LABEL[HOME_N] = { "LIVE VIEW", "GRAPH", "LOG", "TEST MODE", "SETTINGS" };
 inline const char *const HOME_SUB[HOME_N]   = { "V I T W ENERGY", "SCALED PLOT, PEAKS",
-                                                "START/STOP", "VIEW CONSTANTS", "TOUCH + FPS DEBUG" };
+                                                "START/STOP", "ESC SIGNAL + CYCLE", "THEME FILTER DEV" };
 inline const bool HOME_DISABLED[HOME_N]     = { false, false, true, false, false };
 
 /* ------------------------------------------------------------- LIVE VIEW -- */
@@ -84,6 +84,92 @@ inline const Target GRAPH_T[GRAPH_BTN_N] = {
   { {  8, 280,  32, 32}, {  0, 272,  46, 48} },   /* peak R -> bottom-left   */
 };
 
-/* ------------------------------------------------------- CALIBRATE / DEV -- */
-inline const Target CAL_T[1] = { { {  8,   8,  52, 30}, {  0,   0,  96, 52} } };
-inline const Target DEV_T[1] = { { {410, 282,  62, 30}, {394, 262,  86, 58} } };
+/* ------------------------------------------------------------ DEV MODE -- *
+ * Back sits bottom-right so it cannot be hit while dragging the crosshair
+ * around the middle of the panel; the theme toggle takes the opposite
+ * corner, far enough away that the two hit rects never meet. */
+enum { DEV_BTN_BACK, DEV_BTN_THEME, DEV_BTN_N };
+inline const Target DEV_T[DEV_BTN_N] = {
+  { {410, 282,  62, 30}, {394, 262,  86, 58} },
+  { {  8, 282, 132, 30}, {  0, 262, 150, 58} },
+};
+
+/* ----------------------------------------------------------- TEST MODE --
+ * Two halves. The top is the manual set point — a five-part stepper with the
+ * live pulse width in the middle, coarse outside, fine inside — plus the
+ * frame period and a status readout. The bottom is the auto-cycle: low and
+ * high pulse on one row, the two dwells on the next, start/stop across the
+ * foot where a hand reaching for it cannot brush anything else. */
+#define TEST_TITLE_CX 176      /* left of the ARM button, right of Back */
+inline const JCRRect TEST_PULSE_BOX  = {144,  58, 192, 44};
+inline const JCRRect TEST_PERIOD_BOX = { 62, 118, 116, 32};
+inline const JCRRect TEST_STATUS_BOX = {252, 118, 216, 32};
+inline const JCRRect TEST_CYC_BOX[4] = { { 62, 174, 116, 32}, {302, 174, 116, 32},
+                                         { 62, 220, 116, 32}, {302, 220, 116, 32} };
+inline const char *const TEST_CYC_LABEL[4] = { "CYCLE LOW US", "CYCLE HIGH US",
+                                               "DWELL LOW MS", "DWELL HIGH MS" };
+/* Label rows: each 5x7 caption sits in the 8 px above its control row. */
+#define TEST_Y_MANUAL_LBL   46
+#define TEST_Y_PERIOD_LBL  106
+#define TEST_Y_DIVIDER     158
+#define TEST_Y_CYC_LBL     164
+#define TEST_Y_DWELL_LBL   210
+
+enum { TEST_BACK, TEST_ARM,
+       TEST_P_M50, TEST_P_M10, TEST_P_P10, TEST_P_P50,
+       TEST_PER_M, TEST_PER_P,
+       TEST_LO_M,  TEST_LO_P,  TEST_HI_M,  TEST_HI_P,
+       TEST_DLO_M, TEST_DLO_P, TEST_DHI_M, TEST_DHI_P,
+       TEST_CYCLE, TEST_BTN_N };
+inline const Target TEST_T[TEST_BTN_N] = {
+  { {  8,   8,  52, 30}, {  0,   0,  90, 50} },   /* Back                    */
+  { {300,   8, 168, 30}, {292,   0, 188, 52} },   /* ARM / DISARM            */
+  { { 12,  58,  56, 44}, {  0,  52,  72, 54} },   /* pulse -50               */
+  { { 76,  58,  56, 44}, { 72,  52,  68, 54} },   /* pulse -10               */
+  { {344,  58,  56, 44}, {340,  52,  68, 54} },   /* pulse +10               */
+  { {412,  58,  56, 44}, {408,  52,  72, 54} },   /* pulse +50               */
+  { { 12, 118,  44, 32}, {  0, 110,  58, 44} },   /* period -                */
+  { {184, 118,  44, 32}, {180, 110,  60, 44} },   /* period +                */
+  { { 12, 174,  44, 32}, {  0, 168,  58, 44} },   /* cycle low  -            */
+  { {184, 174,  44, 32}, {180, 168,  58, 44} },   /* cycle low  +            */
+  { {252, 174,  44, 32}, {244, 168,  58, 44} },   /* cycle high -            */
+  { {424, 174,  44, 32}, {420, 168,  60, 44} },   /* cycle high +            */
+  { { 12, 220,  44, 32}, {  0, 214,  58, 44} },   /* dwell low  -            */
+  { {184, 220,  44, 32}, {180, 214,  58, 44} },   /* dwell low  +            */
+  { {252, 220,  44, 32}, {244, 214,  58, 44} },   /* dwell high -            */
+  { {424, 220,  44, 32}, {420, 214,  60, 44} },   /* dwell high +            */
+  { { 12, 264, 456, 36}, {  0, 258, 480,  62} },  /* START / STOP CYCLE      */
+};
+
+/* ------------------------------------------------------------ SETTINGS --
+ * A label column on the left, controls in a fixed column on the right, one
+ * row per setting. New settings drop in as another row without disturbing
+ * anything above them, which is the point of laying it out this way. */
+inline const JCRRect SET_FILTER_BOX = {302, 102, 120, 40};
+inline const int16_t SET_ROW_Y[5]   = { 50, 102, 154, 206, 258 };
+inline const char *const SET_ROW_LABEL[5] = { "THEME", "FILTER", "CALIBRATION",
+                                              "SETTINGS", "DIAGNOSTICS" };
+inline const char *const SET_ROW_SUB[5]   = { "PANEL PALETTE",
+                                              "V+I SMOOTHING WINDOW",
+                                              "DUMP CONSTANTS OVER SERIAL",
+                                              "WRITE CURRENT VALUES TO FLASH",
+                                              "TOUCH + FPS DEBUG SCREEN" };
+
+enum { SET_BACK, SET_THEME, SET_FILTER_M, SET_FILTER_P,
+       SET_DUMP, SET_SAVE, SET_DEV, SET_BTN_N };
+inline const Target SET_T[SET_BTN_N] = {
+  { {  8,   8,  52, 30}, {  0,   0,  96, 44} },   /* Back                    */
+  { {300,  50, 168, 40}, {240,  44, 240, 52} },   /* theme toggle            */
+  { {252, 102,  44, 40}, {240,  96,  52, 52} },   /* filter -                */
+  { {426, 102,  42, 40}, {422,  96,  58, 52} },   /* filter +                */
+  { {252, 154, 216, 40}, {240, 148, 240, 52} },   /* dump calibration        */
+  { {252, 206, 216, 40}, {240, 200, 240, 52} },   /* save settings           */
+  { {252, 258, 216, 40}, {240, 252, 240, 68} },   /* dev mode                */
+};
+
+/* ------------------------------------------------------- ESC INDICATOR --
+ * A 4 px amber strip along the very top edge, drawn on every screen while
+ * the ESC output is armed. Every control on every screen starts at y >= 6,
+ * so this can never collide with one — which matters more than elegance for
+ * a warning that a motor may be about to spin. */
+inline const int16_t ESC_BAR_H = 4;

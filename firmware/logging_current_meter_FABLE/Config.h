@@ -26,9 +26,13 @@
 #define PIN_V_PACK   27      /* ADC1 — pack voltage divider                */
 #define PIN_T_SENSE  28      /* ADC2 — NTC thermistor divider              */
 #define PIN_V5_SENSE 29      /* ADC3 — +5V rail / 2, ratiometric reference */
+#define PIN_ESC_SIG   1      /* ESC servo signal out — hardware PWM slice   */
 
 /* ---- display / touch ---- */
 #define LCD_ROTATION   1            /* 1 = 480x320 landscape               */
+#define LCD_IPS        1            /* IPS panel: needs INVON or every colour
+                                     * displays as its complement. The lcdwiki
+                                     * MSP3526 / Hosyond 3.5" is IPS.         */
 #define SPI_HZ         40000000UL
 #define TOUCH_I2C_HZ   400000
 #define TOUCH_HZ       200          /* touch samples per second on core 1  */

@@ -146,10 +146,17 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
   routines.
 - **Current gain is the last uncalibrated channel.** Voltage, thermistor and the current
   zero are done and baked in.
-- **The touchscreen UI is built and running**, in `firmware/logging_current_meter_FABLE/`:
-  live V/I/T/W, energy accumulation, an autoscaled 5 s graph, and a touch diagnostic screen.
-  Its display and touch stack is factored out into `libraries/JCR_TouchScreen/`. Architecture
-  and the measured sampling constraints are in `DESIGN.md` §11.
+- **The touchscreen UI is built and running**, in `firmware/logging_current_meter_FABLE/`
+  (v3.1c): live V/I/T/W, energy accumulation, an autoscaled 5 s graph, **Test Mode** (ESC
+  signal on GP1 — manual set point plus timed auto-cycle, hardware PWM), a Settings screen
+  with flash persistence, dark and navy themes, a tunable weighted filter on the V and I
+  readings, and a touch diagnostic screen with a serial telemetry harness. Its display and
+  touch stack is factored out into `libraries/JCR_TouchScreen/`. Architecture and the
+  measured sampling constraints are in `DESIGN.md` §11.
+- **Touch responsiveness fading with use is under investigation.** v3.1b's register
+  watchdog found the FT6336U's mode register losing its value on its own (47 times in
+  39 minutes) and now rewrites it within 500 ms; the per-register breakdown in v3.1c will
+  say whether the part is resetting or one register is flaky.
 - **Datalogging to microSD is still not started.** The Log tile in the UI is a deliberate
   disabled stub.
 - ~~**microSD MISO tri-state risk.**~~ Inconclusive so far, and **not a blocker** — the
