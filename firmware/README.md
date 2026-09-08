@@ -3,9 +3,15 @@
 | Sketch | Purpose |
 |---|---|
 | `display_bringup/` | Full board diagnostic and calibration tool. Exercises all 20 usable GPIO, reports pass/fail per subsystem with net names, and fits the analog calibration constants |
+| `logging_current_meter_FABLE/` | **The current UI.** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, read-only calibration view, touch diagnostics. Split into one module per concern; built on `libraries/JCR_TouchScreen/` |
+| `FABLE_DEV_TEST_SCREEN/` | Minimal touch-reliability test firmware. The quickest way to prove a panel and its touch mapping in isolation |
+| `logging_current_meter_ui/` | Superseded predecessor (v1.7, Arduino_GFX). Kept as a reference until the new UI is bench-verified |
+| `touch_dev_test/` | Earlier touch experiment. Superseded; not a reference |
+| `_archive/` | Point-in-time copies of superseded firmware, kept as rollbacks. Not compiled — the extensions are deliberately not `.ino` |
 
-The real logging firmware is **not started**. Its architecture, and the sampling
-constraints measured on hardware, are in `DESIGN.md` §11.
+**Datalogging to microSD is still not started** — the Log tile in the UI is a
+deliberate disabled stub. The logging architecture, and the sampling constraints
+measured on hardware, are in `DESIGN.md` §11.
 
 ---
 
@@ -23,7 +29,8 @@ Do not rely on the screen to tell you anything.
 - **Board:** Arduino IDE → *"Raspberry Pi Pico/RP2040"* by **Earle Philhower**, board
   **Waveshare RP2040 Zero**
 - **Library:** **"GFX Library for Arduino"** by *moononournation*. **Not Adafruit_GFX** —
-  different library, different header, no ST7796 driver
+  different library, different header, no ST7796 driver. Required by `display_bringup`
+  and by the superseded `logging_current_meter_ui` only
 - **Touch:** no library; the FT6336U is driven register-direct
 - **Serial Monitor:** 115200, and **set the line ending to Newline** or no command you type
   will ever register
@@ -108,6 +115,53 @@ module's own pin table.
 
 Analog: GP26 `I_SENSE`, GP27 `V_PACK`, GP28 `T_SENSE`, GP29 `V5_SENSE`.
 Other: GP0 spare (J13 pad), GP1 `ESC_SIG_MCU`, GP14/GP15 buttons.
+
+---
+
+## `logging_current_meter_FABLE`
+
+The working UI. **Uses no third-party graphics library** — the display, touch and text
+stack lives in `libraries/JCR_TouchScreen/`, which must be on the Arduino library path
+before this sketch will build:
+
+```
+copy  libraries\JCR_TouchScreen  ->  Documents\Arduino\libraries\JCR_TouchScreen
+arduino-cli compile --fqbn rp2040:rp2040:waveshare_rp2040_zero firmware/logging_current_meter_FABLE
+```
+
+### Why touch is arranged the way it is
+
+These panels are notorious for dropped taps, and the cause is not the hardware. The
+FT6336U ships in trigger mode, where `CTP_INT` only pulses on state *changes*, so a short
+tap can be missed outright; and reading touch from the drawing loop means any slow frame
+stretches the gap between reads until brief contacts land and lift unseen. A third trap:
+monitor mode is enabled by default and quietly drops the scan rate after ~30 s idle, which
+reads as "touch goes dead if you leave it alone".
+
+So the arrangement is inverted. **Core 1 owns touch and the ADC; core 0 owns the display.**
+The controller runs in polling mode and is sampled at a fixed 200 Hz, interleaved *between*
+the four ADC channel bursts so a ~5 ms acquisition can never delay a touch sample by more
+than one channel. Press and release become queued events, so a slow frame delays the
+*reaction* to a tap, never its *registration*.
+
+Four rules keep that true as features are added. They are restated in the sketch header:
+
+1. Core 1 never blocks, prints or draws — sampling and touch servicing only.
+2. Core 0 may be arbitrarily slow; drain touch events every pass regardless.
+3. Never repaint the whole screen per tick. Chrome once on entry, then only the fields
+   that changed. A full-screen fill is ~60 ms even at 40 MHz.
+4. Core 0 never touches the ADC; core 1 never touches SPI.
+
+### Layout
+
+One file per concern. `Config.h` holds the pin map, bus rates and **the calibration
+constants** — that is the file to edit after running `display_bringup`'s `v`/`i`/`n`
+routines. `Layout.h` holds every pixel coordinate, so retargeting to another panel size is
+one file. `Sampler.*` is the core-1 ADC and the graph ring buffer; `Widgets.*` the button
+chrome and cached fields; `Screens.*` navigation, with one `Screen*.cpp` per screen.
+
+Fonts are generated locally by `make_fonts.py` from a TTF — Russo One here, which is SIL
+OFL, so the generator ships rather than the font.
 
 ---
 

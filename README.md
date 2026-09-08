@@ -59,6 +59,9 @@ production/                        gerbers, BOM, positions and IPC netlist as se
 DESIGN.md                          the real documentation, reasoning, maths, decisions
 BOM.md / BOM.csv                   bill of materials, generated from the schematic
 generator/                         the Python that builds and checks all of the above
+firmware/                          bring-up diagnostic and the touchscreen UI, one folder per sketch
+libraries/JCR_TouchScreen/         reusable ST7796 + FT6336U display and touch library
+COMMIT_TIMELINE.md                 full detail behind every commit, newest first
 ```
 
 `DESIGN.md` is the substantive document; this README is only an index. It records *why*
@@ -143,8 +146,12 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
   routines.
 - **Current gain is the last uncalibrated channel.** Voltage, thermistor and the current
   zero are done and baked in.
-- **The real firmware is not started.** Architecture and the measured sampling constraints
-  are in `DESIGN.md` §11.
+- **The touchscreen UI is built and running**, in `firmware/logging_current_meter_FABLE/`:
+  live V/I/T/W, energy accumulation, an autoscaled 5 s graph, and a touch diagnostic screen.
+  Its display and touch stack is factored out into `libraries/JCR_TouchScreen/`. Architecture
+  and the measured sampling constraints are in `DESIGN.md` §11.
+- **Datalogging to microSD is still not started.** The Log tile in the UI is a deliberate
+  disabled stub.
 - ~~**microSD MISO tri-state risk.**~~ Inconclusive so far, and **not a blocker** — the
   panel is driven write-only and works. With no card in the slot nothing drives MISO on
   these modules, so `0xFF` is the expected reading. The §11 question only has meaning with

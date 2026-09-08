@@ -1,0 +1,62 @@
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+JCR_TFT	KEYWORD1
+JCR_ST7796	KEYWORD1
+JCR_FT6336	KEYWORD1
+JCR_Text	KEYWORD1
+JCRFont	KEYWORD1
+JCRTouchPoint	KEYWORD1
+JCRTouchEvent	KEYWORD1
+JCRTouchStats	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+begin	KEYWORD2
+setSPIPins	KEYWORD2
+setRotation	KEYWORD2
+backlight	KEYWORD2
+invertDisplay	KEYWORD2
+fillScreen	KEYWORD2
+fillRect	KEYWORD2
+drawRect	KEYWORD2
+drawPixel	KEYWORD2
+drawFastHLine	KEYWORD2
+drawFastVLine	KEYWORD2
+drawLine	KEYWORD2
+drawCircle	KEYWORD2
+fillCircle	KEYWORD2
+drawRoundRect	KEYWORD2
+fillRoundRect	KEYWORD2
+drawVRun	KEYWORD2
+startWrite	KEYWORD2
+endWrite	KEYWORD2
+setAddrWindow	KEYWORD2
+pushPixelsBE	KEYWORD2
+pushColor	KEYWORD2
+color565	KEYWORD2
+setMapping	KEYWORD2
+service	KEYWORD2
+serviceNow	KEYWORD2
+getTouch	KEYWORD2
+isDown	KEYWORD2
+popEvent	KEYWORD2
+flushEvents	KEYWORD2
+getStats	KEYWORD2
+resetStats	KEYWORD2
+setFont	KEYWORD2
+setScale	KEYWORD2
+textWidth	KEYWORD2
+charWidth	KEYWORD2
+draw	KEYWORD2
+drawCentered	KEYWORD2
+drawRight	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+JCR_TOUCH_DOWN	LITERAL1
+JCR_TOUCH_UP	LITERAL1
+JCR_TOUCH_NONE	LITERAL1
+JCR_Font5x7	LITERAL1
