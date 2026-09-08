@@ -59,3 +59,10 @@ LCM_Purchased_BOM.xlsx
 # pick up next, licensing rationale. Deliberately local -- it carries working context and
 # loose ends that do not belong in public history. Copy it by hand when moving machines.
 memory.md
+
+# ---- assistant scratch output ------------------------------------------------------------
+# "Claude outputs/" is a staging area for files handed over during a working session:
+# duplicate copies of things that also live in firmware/ and libraries/, plus unrelated
+# artefacts from other tasks. The canonical copies are the ones in the tree; this folder is
+# working residue and does not belong in history.
+Claude outputs/
