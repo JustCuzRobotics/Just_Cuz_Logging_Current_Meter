@@ -1,4 +1,5 @@
 #include "Sampler.h"
+#include "EscOut.h"
 #include <math.h>
 
 volatile SampleState gState;
@@ -17,6 +18,12 @@ volatile uint8_t gFilterSamples = 0;      /* set from Settings at boot */
 volatile uint32_t gTickOverruns = 0;
 volatile uint32_t gTickUsMax    = 0;
 volatile bool     gTickMaxResetReq = false;
+
+LogRec gLogRing[LOG_RING_N];
+volatile uint16_t gLogHead = 0, gLogTail = 0;
+volatile uint32_t gLogRingDrops = 0;
+volatile uint16_t gEnergyEpoch = 0;
+static uint32_t   sTickSeq = 0;
 
 /* ---- linear weighted moving average, newest sample heaviest --------------
  * Weights are 1..N, so the divisor is N(N+1)/2. Worst case is 20 samples of
@@ -171,8 +178,10 @@ void samplerTick(void (*interleave)()) {
   const float K_WH_PER_US = 1.0f / 3600000000.0f;
   /* Raw, deliberately. An integral is inherently smooth, so there is nothing
    * to gain from filtering it and the raw value is the exact one. */
-  gState.energyWh  += watts * (float)dtUs * K_WH_PER_US;
-  gState.energyMah += amps * 1000.0f * (float)dtUs * K_WH_PER_US;
+  float dWh  = watts * (float)dtUs * K_WH_PER_US;
+  float dMah = amps * 1000.0f * (float)dtUs * K_WH_PER_US;
+  gState.energyWh  += dWh;
+  gState.energyMah += dMah;
   gState.runElapsedMs += dtUs / 1000UL;
 
   /* Peak sag voltage is stored BEFORE peak power, every tick, in that fixed
@@ -205,9 +214,12 @@ void samplerTick(void (*interleave)()) {
 
   /* Energy reset and timer reset are one combined action, deliberately. */
   if (gCmdResetEnergyTimer) {
-    gState.energyWh = 0.0f; gState.energyMah = 0.0f;
+    /* Restart from THIS tick's increment rather than zero, so the tick the
+     * reset lands on is not lost — a log started under load counts it. */
+    gState.energyWh = dWh; gState.energyMah = dMah;
     gState.runElapsedMs = 0;
     gState.mark2Captured = gState.mark3Captured = false;
+    gEnergyEpoch++;                /* before the flag clears: see LogRec    */
     gCmdResetEnergyTimer = false;
   }
 
@@ -219,6 +231,29 @@ void samplerTick(void (*interleave)()) {
   gRingV[h] = centivolts;
   gRingT[h] = tForRing;
   gRingHead = h;
+
+  /* Log record — last, so it reflects any reset applied above. */
+  {
+    uint16_t head = gLogHead;
+    uint16_t next = (uint16_t)((head + 1) % LOG_RING_N);
+    if (next == gLogTail) {
+      gLogRingDrops++;
+    } else {
+      LogRec &r = gLogRing[head];
+      r.seq   = sTickSeq;
+      r.tMs   = millis();
+      r.iRaw  = rawAmps;   r.iFilt = centiamps;
+      r.vRaw  = rawVolts;  r.vFilt = centivolts;
+      r.tC    = centidegc;
+      r.escUs = gEscOutUs;
+      r.mWRaw = (int32_t)lroundf(watts * 1000.0f);
+      r.mah   = gState.energyMah;
+      r.wh    = gState.energyWh;
+      r.energyEpoch = gEnergyEpoch;
+      gLogHead = next;
+    }
+    sTickSeq++;
+  }
 
   uint32_t tickUs = micros() - tickT0;
   if (tickUs > gTickUsMax) gTickUsMax = tickUs;

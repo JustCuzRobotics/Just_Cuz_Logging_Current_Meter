@@ -1,5 +1,5 @@
 /* ==========================================================================
- * logging_current_meter_FABLE.ino — v3.1c (2026-09-08)
+ * logging_current_meter_FABLE.ino — v3.2 (2026-09-16)
  *
  * Touchscreen UI for the Just 'Cuz Robotics Logging Current Meter (Rev A).
  * RP2040-Zero + 3.5" 480x320 ST7796/FT6336U on one FPC.
@@ -13,7 +13,9 @@
  *   Sampler.*     core-1 ADC, calibration maths, graph history ring
  *   Widgets.*     button chrome, cached fields, toast
  *   Settings.*    user settings and their flash persistence
- *   EscOut.*      ESC servo-signal output (hardware PWM, auto-cycle)
+ *   EscOut.*      ESC servo-signal output (SDK PWM, arm hold, auto-cycle)
+ *   Logger.*      SD CSV logging, triggers, USB CSV stream
+ *   Version.h     the version string shared by banner and log headers
  *   Screens.*     navigation and dispatch
  *   Screen*.cpp   one file per screen
  *
@@ -41,6 +43,20 @@
  *
  * --------------------------------------------------------------------------
  * Version history
+ *   v3.2  2026-09-16  ESC OUTPUT WAS WRONG SINCE v3.1. arduino-pico clamps
+ *                     analogWriteFreq() to >= 100 Hz without saying so, so
+ *                     the 50 Hz frame ran at 100 Hz on a 20000-count range
+ *                     and every pulse came out at half width (1000 us idle
+ *                     was 500 us). The ESC pin now drives its PWM slice
+ *                     through the Pico SDK at exactly 1 us per count, and
+ *                     arming always emits idle for 2 s before anything else
+ *                     (the old 'e' key armed at 1500 us). New: SD logging
+ *                     (LOG screen — manual, Test-cycle, or current-threshold
+ *                     start with a 1-15 min duration and 0.5 s pre-trigger;
+ *                     raw + filtered V/I, energy since log start) and a USB
+ *                     CSV stream of the same rows without energy. All
+ *                     non-data serial output is now prefixed '#'. Settings
+ *                     blob v2, migrating a v3.1c save.
  *   v3.1c 2026-09-08  First harness data: the FT6336U's mode register (0xA4)
  *                     was found drifting 47 times in 39 min and being
  *                     rewritten by the watchdog — the likely cause of the
@@ -92,13 +108,18 @@
  *                     FABLE_DEV_TEST_SCREEN v1.1; raw 40 MHz ST7796 driver,
  *                     Russo One typography, per-button enlarged hit rects.
  *
- * Serial 115200. Keys:
+ * Serial 115200. Every line that is not a CSV data row starts with '#'.
+ * Keys:
  *   r  reset touch diagnostic counters
  *   d  toggle the once-per-second [tp] telemetry line
  *   t  re-initialise the touch controller (runs on core 1)
  *   L  toggle synthetic core-0 load (full-screen fill every loop)
  *   f  filter 0 <-> 20 samples
- *   e  ESC output arm/disarm at 1500 us
+ *   e  ESC output arm (idle, 2 s hold) / disarm
+ *   p  print the ESC PWM slice registers (compare with a scope)
+ *   s  USB CSV stream on/off (not saved - use the LOG screen's SAVE)
+ *   g  SD log start/stop
+ *   m  remount the SD card
  * ========================================================================*/
 #include <JCR_TouchScreen.h>
 
@@ -111,6 +132,8 @@
 #include "Screens.h"
 #include "Settings.h"
 #include "EscOut.h"
+#include "Logger.h"
+#include "Version.h"
 
 JCR_ST7796 tft(PIN_LCD_CS, PIN_LCD_RS, PIN_LCD_RST, PIN_LCD_LED, LCD_IPS != 0);
 JCR_FT6336 touch(Wire1, PIN_CTP_SDA, PIN_CTP_SCL, PIN_CTP_RST, PIN_CTP_INT);
@@ -221,7 +244,7 @@ void setup() {
     /* Only fails if the scanline buffer could not be allocated — without it
      * every drawing call is a silent no-op, so say so rather than boot into
      * a blank panel. */
-    Serial.println(F("FATAL: display begin() failed (scanline buffer)"));
+    Serial.println(F("# FATAL: display begin() failed (scanline buffer)"));
     while (true) delay(1000);
   }
   gfxText.setFont(JCR_Font5x7);
@@ -229,7 +252,13 @@ void setup() {
   /* Nothing is printed here on purpose — see the announce block in loop(). */
 
   goTo(SCR_HOME);
-  gCoreReady = true;      /* release core 1 last */
+  gCoreReady = true;      /* release core 1 */
+
+  /* The card mounts after the display (SdFat shares SPI0 and must not call
+   * SPI.begin() itself) and after core 1 is released, because a mount with no
+   * card can take ~2 s: touch and sampling run meanwhile, and the 6.7 s log
+   * ring absorbs the samples. */
+  logBegin();
 }
 
 void loop() {
@@ -258,23 +287,30 @@ void loop() {
     /* Everything in this project's history so far was written on one day, so
      * a date alone does not identify a build. The compiler's own timestamp
      * does, and costs nothing. */
-    Serial.println(F("Logging Current Meter UI  v3.1c (FABLE)"));
-    Serial.println(F("built " __DATE__ " " __TIME__));
-    Serial.println(F("keys: r reset stats | d telemetry | t touch reinit | L load | f filter | e esc"));
-    Serial.printf("touch: chip 0x%02X fw 0x%02X vendor 0x%02X %s\n",
+    Serial.println(F("# Logging Current Meter UI  " FW_VERSION));
+    Serial.println(F("# built " __DATE__ " " __TIME__));
+    Serial.println(F("# keys: r stats | d telemetry | t touch reinit | L load | f filter | e esc arm | p pwm | s stream | g log | m mount"));
+    Serial.printf("# touch: chip 0x%02X fw 0x%02X vendor 0x%02X %s\n",
                   touch.chipId(), touch.firmwareId(), touch.vendorId(),
                   touch.ok() ? "ok" : "INIT FAILED");
-    Serial.printf("settings: %s  theme=%u  filter=%u samples (%ums)\n",
+    Serial.printf("# settings: %s  theme=%u  filter=%u samples (%ums)\n",
                   settingsLoadedFromFlash() ? "loaded from flash" : "defaults",
                   (unsigned)gSet.theme,
                   (unsigned)FILTER_SAMPLES[gSet.filterIndex],
                   (unsigned)filterWindowMs(gSet.filterIndex));
+    Serial.printf("# log: %s  mode=%u rate=%s threshold=%uA duration=%umin  stream=%s\n",
+                  logCardText(), (unsigned)gSet.logMode, LOG_RATE_LABEL[gSet.logRateIdx],
+                  (unsigned)gSet.logThreshA, (unsigned)LOG_DUR_MIN[gSet.logDurIdx],
+                  streamOn() ? "on" : "off");
     checkTargetOverlaps();
+    if (streamOn()) streamPrintHeader();
   }
 
   pumpTouchEvents();      /* never skipped, however slow the frame */
   escTick();              /* auto-cycle state machine — never blocks       */
   escBarTick();           /* the armed strip, on whichever screen is up    */
+  logTick();              /* drain samples: trigger, SD, USB stream        */
+  logBarTick();           /* the recording strip along the bottom edge     */
   tickScreen(gScreen);
   updateToast();
 
@@ -307,7 +343,7 @@ static void telemetryTick() {
    * the fault being chased. */
   if (sTelemetry && Serial && Serial.availableForWrite() > 160) {
     uint32_t uiHz = gLoopUsAvg ? (1000000UL / gLoopUsAvg) : 0;
-    Serial.printf("[tp] t=%lus TP=%lu UI=%lu fmax=%lums lat=%lu/%lums dn=%lu up=%lu ovf=%lu "
+    Serial.printf("# [tp] t=%lus TP=%lu UI=%lu fmax=%lums lat=%lu/%lums dn=%lu up=%lu ovf=%lu "
                   "i2c=%lu drp=%lu jmp=%lu rng=%lu drift=%lu[%lu/%lu/%lu/%lu] svc=%luus "
                   "tick=%lu/%luus reinit=%lu esc=%u heap=%luk\n",
                   (unsigned long)(now / 1000), (unsigned long)s.sampleHz, (unsigned long)uiHz,
@@ -338,28 +374,46 @@ static void serialKeys() {
   switch (c) {
     case 'r': case 'R':
       touch.resetStats(); gDevTaps = 0; gTickOverruns = 0;
-      Serial.println(F("[touch stats reset]"));
+      Serial.println(F("# [touch stats reset]"));
       break;
     case 'd': case 'D':
       sTelemetry = !sTelemetry;
-      Serial.printf("[telemetry %s]\n", sTelemetry ? "on" : "off");
+      Serial.printf("# [telemetry %s]\n", sTelemetry ? "on" : "off");
       break;
     case 't': case 'T':
       touch.requestReinit();
-      Serial.println(F("[touch reinit requested - core 1 will restart the controller]"));
+      Serial.println(F("# [touch reinit requested - core 1 will restart the controller]"));
       break;
     case 'l': case 'L':
       sLoad = !sLoad;
-      Serial.printf("[synthetic core-0 load %s]\n", sLoad ? "ON" : "off");
+      Serial.printf("# [synthetic core-0 load %s]\n", sLoad ? "ON" : "off");
       break;
     case 'f': case 'F':
       gSet.filterIndex = gSet.filterIndex ? 0 : (FILTER_OPTION_COUNT - 1);
       settingsApplyFilter();
-      Serial.printf("[filter %u samples]\n", (unsigned)gFilterSamples);
+      Serial.printf("# [filter %u samples]\n", (unsigned)gFilterSamples);
       break;
     case 'e': case 'E':
-      if (escArmed()) escArm(false); else { escSetPulse(1500); escArm(true); }
-      Serial.printf("[esc %s]\n", escArmed() ? "ARMED 1500us" : "off");
+      /* Arms at idle with the 2 s hold, exactly like the ARM button. The old
+       * key armed at 1500 us, which a unidirectional ESC refuses to arm on. */
+      escArm(!escArmed());
+      Serial.printf("# [esc %s]\n", escArmed() ? "ARMED - idle 1000us, 2s hold" : "off");
+      escPrintPwm(Serial);
+      break;
+    case 'p': case 'P':
+      escPrintPwm(Serial);
+      break;
+    case 's': case 'S':
+      streamSet(!streamOn());
+      if (!streamOn()) Serial.println(F("# [stream off]"));
+      break;
+    case 'g': case 'G':
+      if (logRecording()) logStop("serial");
+      else if (!logStart()) Serial.println(F("# [log] start failed - see card status"));
+      break;
+    case 'm': case 'M':
+      if (logRecording()) Serial.println(F("# [log] stop the log before remounting"));
+      else logMount();
       break;
     default: break;
   }

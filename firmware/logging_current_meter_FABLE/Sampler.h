@@ -77,3 +77,39 @@ extern volatile uint8_t gFilterSamples;   /* 0 = off, else 2..20 */
 extern volatile uint32_t gTickOverruns;
 extern volatile uint32_t gTickUsMax;
 extern volatile bool     gTickMaxResetReq;   /* core 0 raises, core 1 clears */
+
+/* ---- log record ring (v3.2) ----------------------------------------------
+ * One record per sample tick, pushed by core 1 at the END of samplerTick()
+ * (after any reset command has been applied), drained by core 0 into the SD
+ * log and the USB stream.
+ *
+ * Single producer, single consumer, no lock: core 1 is the only writer of
+ * gLogHead and core 0 the only writer of gLogTail. Core 1 advances the head
+ * only after the slot is fully written, so core 0 can never read a half-
+ * written record. If core 0 falls a whole ring behind (~6.7 s — an SD card
+ * stalling far beyond anything normal) core 1 drops the NEW record rather
+ * than overwrite one core 0 may be reading, and counts it in gLogRingDrops.
+ *
+ * Records carry raw AND filtered V/I: raw is what the instrument measured,
+ * filtered is what the screen showed. Power is raw V x raw I, the same
+ * product energy integrates. energyEpoch increments every time core 1 applies
+ * an energy reset, so a consumer can tell a reset apart from a counter that
+ * merely went backwards. */
+struct LogRec {
+  uint32_t seq;            /* tick number since boot                        */
+  uint32_t tMs;            /* core-1 millis() at the end of the tick        */
+  int16_t  iRaw, iFilt;    /* centiamps                                     */
+  int16_t  vRaw, vFilt;    /* centivolts                                    */
+  int16_t  tC;             /* centidegC, FIXED_INVALID on thermistor fault  */
+  uint16_t escUs;          /* pulse on the ESC pin this tick, 0 = off       */
+  int32_t  mWRaw;          /* milliwatts, raw V x raw I                     */
+  float    mah, wh;        /* cumulative since the last energy reset        */
+  uint16_t energyEpoch;
+};
+
+#define LOG_RING_N  512    /* x 13.158 ms = 6.7 s of slack for SD stalls    */
+extern LogRec gLogRing[LOG_RING_N];
+extern volatile uint16_t gLogHead;      /* core 1 writes: next free slot     */
+extern volatile uint16_t gLogTail;      /* core 0 writes: next to read       */
+extern volatile uint32_t gLogRingDrops;
+extern volatile uint16_t gEnergyEpoch;

@@ -124,7 +124,9 @@ void updateTestTick(bool forceClear) {
 
   char buf[40];
   snprintf(buf, sizeof buf, "%u", (unsigned)escPulse());
-  drawStepperBox(TEST_PULSE_BOX, buf, escArmed() ? COL_AMP : COL_TEXT, cPulse);
+  /* The box shows the set point; it is amber only once that is what the pin
+   * is actually emitting (not during the arming hold, which emits idle). */
+  drawStepperBox(TEST_PULSE_BOX, buf, (escArmed() && !escHolding()) ? COL_AMP : COL_TEXT, cPulse);
   snprintf(buf, sizeof buf, "%u", (unsigned)escPeriod());
   drawStepperBox(TEST_PERIOD_BOX, buf, COL_TEXT, cPeriod);
 
@@ -135,7 +137,9 @@ void updateTestTick(bool forceClear) {
 
   /* Status doubles as the cycle countdown, so it is the one field that moves
    * on its own; everything else only changes when a button is pressed. */
-  if (escCycling())
+  if (escHolding())
+    snprintf(buf, sizeof buf, "ARMING - IDLE %lus", (unsigned long)((escHoldRemainMs() + 999) / 1000));
+  else if (escCycling())
     snprintf(buf, sizeof buf, "CYCLE %s  %lus", escCycleAtHigh() ? "HIGH" : "LOW ",
              (unsigned long)((escCycleRemainMs() + 999) / 1000));
   else

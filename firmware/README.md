@@ -3,15 +3,15 @@
 | Sketch | Purpose |
 |---|---|
 | `display_bringup/` | Full board diagnostic and calibration tool. Exercises all 20 usable GPIO, reports pass/fail per subsystem with net names, and fits the analog calibration constants |
-| `logging_current_meter_FABLE/` | **The current UI (v3.1c).** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, Test Mode (ESC signal + auto-cycle), Settings with flash persistence, two themes, tunable V/I filter, touch diagnostics with a serial telemetry harness. One module per concern; built on `libraries/JCR_TouchScreen/` |
+| `logging_current_meter_FABLE/` | **The current UI (v3.2).** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, Test Mode (ESC signal + auto-cycle), **SD logging with manual / cycle / current-threshold start and a USB CSV stream**, Settings with flash persistence, two themes, tunable V/I filter, touch diagnostics with a serial telemetry harness. One module per concern; built on `libraries/JCR_TouchScreen/` |
 | `FABLE_DEV_TEST_SCREEN/` | Minimal touch-reliability test firmware. The quickest way to prove a panel and its touch mapping in isolation |
 | `logging_current_meter_ui/` | Superseded predecessor (v1.7, Arduino_GFX). Kept as a reference until the new UI is bench-verified |
 | `touch_dev_test/` | Earlier touch experiment. Superseded; not a reference |
 | `_archive/` | Point-in-time copies of superseded firmware, kept as rollbacks. Not compiled — the extensions are deliberately not `.ino` |
 
-**Datalogging to microSD is still not started** — the Log tile in the UI is a
-deliberate disabled stub. The logging architecture, and the sampling constraints
-measured on hardware, are in `DESIGN.md` §11.
+**Datalogging to microSD and the USB stream are built as of v3.2** (compile-checked and
+simulated on the host; not yet bench-verified). See *Logging* under
+`logging_current_meter_FABLE` below. `tools/capture_stream.py` records the stream on a PC.
 
 ---
 
@@ -173,8 +173,10 @@ routines (Settings → DUMP prints the current ones over serial). `Layout.h` hol
 pixel coordinate and touch target, so retargeting to another panel size is one file.
 `Sampler.*` is the core-1 ADC, the V/I weighted-moving-average filter and the graph ring;
 `Settings.*` the user settings and their EEPROM persistence (explicit Save only — a flash
-write halts both cores for a few ms); `EscOut.*` the ESC servo signal on GP1 (hardware
-PWM, never bit-banged, OFF at boot, idle pulse is all that ever persists); `Theme.*` the
+write halts both cores for a few ms); `EscOut.*` the ESC servo signal on GP1 (Pico SDK PWM
+at 1 µs per count, OFF at boot, always arms at idle with a 2 s hold); `Logger.*` the SD
+log, its triggers and the USB stream; `Version.h` the version string the banner and log
+headers share; `Theme.*` the
 two palettes behind the `COL_*` macros; `Widgets.*` the button chrome and cached fields;
 `Screens.*` navigation, with one `Screen*.cpp` per screen.
 
@@ -187,12 +189,82 @@ two palettes behind the `COL_*` macros; `Widgets.*` the button chrome and cached
 | `t` | re-initialise the touch controller from core 1 |
 | `L` | synthetic ~60 ms core-0 load per loop |
 | `f` | filter 0 ↔ 20 samples |
-| `e` | ESC output on/off at 1500 µs |
+| `e` | ESC output arm (idle 1000 µs, 2 s hold) / disarm, then prints the PWM registers |
+| `p` | print the ESC PWM slice registers — divider, TOP, level, and the period/pulse they make |
+| `s` | USB CSV stream on/off (not saved — the LOG screen's SAVE persists it) |
+| `g` | SD log start / stop |
+| `m` | remount the SD card (runs the read-back test) |
+
+**Every serial line that is not a CSV data row starts with `#`** as of v3.2, so a capture
+can separate data from the banner, `[tp]` telemetry and `[log]` events by the first
+character.
 
 The `[tp]` line is the touch-investigation tool: `TP` dropping means core 1 is starved,
 `lat` climbing with `TP` steady means core 0 is slow, `dn` not counting on a real tap means
 the controller stopped reporting, and `drift=[a/b/c/d]` counts the controller's four
 configuration registers found not holding their values (rewritten automatically).
+
+### ESC output — the v3.1 timing bug
+
+v3.1 drove GP1 with `analogWriteFreq(1e6/period)` + `analogWriteRange(period)`. **arduino-pico
+clamps `analogWriteFreq()` to ≥ 100 Hz, silently**, so the 50 Hz frame ran at 100 Hz on a
+20000-count range and every pulse was half width: "1000 µs idle" was 500 µs, "2000 µs"
+was 1000 µs (any frame longer than 10 ms was scaled by 10000/period). Some ESCs reject a
+500 µs pulse and never arm; others accept it as zero throttle. v3.2 drives the slice
+through the SDK directly at 1 µs per count, and `p` reads the registers back — check the
+waveform on a scope against that line before trusting a test.
+
+Arming now always emits 1000 µs for 2 s before the set point or a cycle applies, and the
+set point resets to idle on arm. ESCs refuse to arm when their first frames carry
+throttle.
+
+### Logging (v3.2)
+
+**LOG** tile on Home. All settings persist with **SAVE** (on the LOG screen; refused while
+recording, because a flash commit pauses core 1). A red strip along the **bottom** edge of
+every screen shows a log recording (solid) or CURRENT mode armed (dashed).
+
+| Setting | Options |
+|---|---|
+| Mode | **MANUAL** (START/STOP or serial `g`) · **CYCLE** (Test Mode START CYCLE opens a log, STOP closes it) · **CURRENT** (starts when raw current > threshold for 3 ticks) |
+| Rate | 76 / 38 / 15 / 7.6 / 1 Hz — decimations of the 13.158 ms tick |
+| Auto start above | 1–50 A, default **5 A** (CURRENT mode) |
+| Duration | no limit, 1, 2, 3, 5, 10, 15 min — ends any log |
+
+- **Starting a log resets the energy counters and run timer**, so Live View and the file agree.
+- CURRENT mode keeps **~0.5 s before the trigger** (negative `t_ms`), then re-arms only after
+  the current has been below the threshold for 2 s — a run that outlasts its duration does
+  not start a second file. With duration "no limit", a triggered log ends after 10 s below
+  the threshold.
+- An automatic start with no card mounted is **skipped, not mounted** — a failed mount
+  blocks core 0 for ~2 s, which is not acceptable while a motor spins up. Insert the card and
+  press REMOUNT SD (or serial `m`).
+- Files `LOG0001.CSV` upward. Not pre-allocated (a power pull would otherwise leave
+  megabytes of junk after the data); 512 B block writes, synced every 2 s. Mounting runs a
+  write/read-back test, because the card shares MISO with the LCD (`DESIGN.md` §11).
+
+**SD file** — `#` header lines (build, trigger, mode, rate, filter, ESC period, which
+calibration constants are nominal), then:
+
+```
+t_ms,i_raw,i_filt,v_raw,v_filt,w,t_c,mah,wh,esc_us
+```
+
+`t_ms` from log start · `_raw` is the instrument, `_filt` is what the screen showed ·
+`w` = `v_raw × i_raw` · `t_c` blank on a thermistor fault · `mah`/`wh` since log start ·
+`esc_us` is what was on GP1 that tick, 0 = off. A closing `# end` line carries the reason,
+rows, totals, peaks and drop counts. pandas: `pd.read_csv(f, comment="#")`.
+
+**USB stream** — same rows **without energy**, `t_ms` since boot:
+
+```
+t_ms,i_raw,i_filt,v_raw,v_filt,w,t_c,esc_us
+```
+
+A line that does not fit the USB buffer is dropped and counted (`USB DROP` on the LOG
+screen), never waited for. On a PC: `pip install pyserial`, then
+`python tools\capture_stream.py` — it finds the port, turns the stream on if needed, and
+writes `meter_<date>_<time>.csv` with a `pc_time` column.
 
 Fonts are generated locally by `make_fonts.py` from a TTF — Russo One here, which is SIL
 OFL, so the generator ships rather than the font.

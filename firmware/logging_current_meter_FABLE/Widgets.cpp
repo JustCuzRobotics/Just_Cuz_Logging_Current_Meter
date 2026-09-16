@@ -2,6 +2,7 @@
 #include "EscOut.h"
 #include <string.h>
 #include "Screens.h"
+#include "Logger.h"
 
 void t5(int16_t x, int16_t y, const char *s, uint16_t fg, uint16_t bg, uint8_t scale) {
   gfxText.setFont(JCR_Font5x7);
@@ -195,4 +196,30 @@ void escBarTick() {
   first = false;
   wasArmed = now;
   escBarPaint();
+}
+
+/* ------------------------------------------------------------------------
+ * Log strip, bottom edge. 0 = off, 1 = waiting (dashed), 2 = recording.
+ * ---------------------------------------------------------------------- */
+static uint8_t logBarMode() {
+  LogState st = logState();
+  if (st == LOGST_RECORDING) return 2;
+  if (st == LOGST_WAITING)   return 1;
+  return 0;
+}
+
+void logBarPaint() {
+  int16_t y = (int16_t)(tft.height() - LOG_BAR_H);
+  uint8_t m = logBarMode();
+  tft.fillRect(0, y, tft.width(), LOG_BAR_H, m == 2 ? COL_DANGER : COL_BG);
+  if (m == 1)
+    for (int16_t x = 0; x < tft.width(); x += 24) tft.fillRect(x, y, 12, LOG_BAR_H, COL_DANGER);
+}
+
+void logBarTick() {
+  static uint8_t was = 0xFF;
+  uint8_t now = logBarMode();
+  if (now == was) return;
+  was = now;
+  logBarPaint();
 }

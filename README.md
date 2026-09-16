@@ -21,7 +21,7 @@ calibrated. **Two known Rev A faults: the buttons are dead (footprint pad mappin
 | Current sensor | ACS770KCB-150U, Hall, galvanically isolated, 100 µΩ conductor |
 | MCU | Waveshare RP2040-Zero |
 | Display | 3.5" 480×320 IPS, ST7796U + FT6336U touch + microSD, 14-way FPC |
-| Logging | microSD **and** USB CDC at 100 Hz |
+| Logging | microSD **and** USB CDC CSV, up to 76 Hz (every sample tick) |
 | Channels | current, pack voltage, 5 V rail, 1× 100 k NTC, plus ESC signal out |
 | Board | 95 × 62 mm, 4 layer, 1 oz outer / 0.5 oz inner |
 | Assembled PCB | ≈ $15/board delivered, at qty 10 (JLCPCB: bare board + SMT parts + assembly + shipping) |
@@ -60,6 +60,7 @@ DESIGN.md                          the real documentation, reasoning, maths, dec
 BOM.md / BOM.csv                   bill of materials, generated from the schematic
 generator/                         the Python that builds and checks all of the above
 firmware/                          bring-up diagnostic and the touchscreen UI, one folder per sketch
+tools/capture_stream.py            records the meter's USB CSV stream on a PC
 libraries/JCR_TouchScreen/         reusable ST7796 + FT6336U display and touch library
 COMMIT_TIMELINE.md                 full detail behind every commit, newest first
 ```
@@ -147,8 +148,10 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
 - **Current gain is the last uncalibrated channel.** Voltage, thermistor and the current
   zero are done and baked in.
 - **The touchscreen UI is built and running**, in `firmware/logging_current_meter_FABLE/`
-  (v3.1c): live V/I/T/W, energy accumulation, an autoscaled 5 s graph, **Test Mode** (ESC
-  signal on GP1 — manual set point plus timed auto-cycle, hardware PWM), a Settings screen
+  (v3.2): live V/I/T/W, energy accumulation, an autoscaled 5 s graph, **Test Mode** (ESC
+  signal on GP1 — manual set point plus timed auto-cycle, hardware PWM), **SD logging**
+  (manual, Test-cycle or current-threshold start, 1–15 min duration) with a **USB CSV
+  stream**, a Settings screen
   with flash persistence, dark and navy themes, a tunable weighted filter on the V and I
   readings, and a touch diagnostic screen with a serial telemetry harness. Its display and
   touch stack is factored out into `libraries/JCR_TouchScreen/`. Architecture and the
@@ -157,8 +160,10 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
   watchdog found the FT6336U's mode register losing its value on its own (47 times in
   39 minutes) and now rewrites it within 500 ms; the per-register breakdown in v3.1c will
   say whether the part is resetting or one register is flaky.
-- **Datalogging to microSD is still not started.** The Log tile in the UI is a deliberate
-  disabled stub.
+- **v3.2 is compile-checked but not yet bench-verified.** It fixes Test Mode's ESC timing
+  (v3.1's pulses were half width — see `firmware/README.md`), and adds SD logging and the
+  USB stream. To verify: the `p` readout against a scope, both ESCs arming, a card
+  read-back at mount, and one log of each mode.
 - ~~**microSD MISO tri-state risk.**~~ Inconclusive so far, and **not a blocker** — the
   panel is driven write-only and works. With no card in the slot nothing drives MISO on
   these modules, so `0xFF` is the expected reading. The §11 question only has meaning with

@@ -69,7 +69,7 @@ void themeApply(uint8_t id) {
   /* Announced because "the theme did not change" and "the theme changed but
    * both look alike on this panel" are different problems with the same
    * symptom, and only one of them is a code bug. */
-  if (Serial) Serial.printf("[theme] %s  bg=0x%04X boxFill=0x%04X border=0x%04X\n",
+  if (Serial) Serial.printf("# [theme] %s  bg=0x%04X boxFill=0x%04X border=0x%04X\n",
                             gPal->name, gPal->bg, gPal->boxFill, gPal->boxBorder);
 }
 uint8_t themeCurrent() { return s_theme; }

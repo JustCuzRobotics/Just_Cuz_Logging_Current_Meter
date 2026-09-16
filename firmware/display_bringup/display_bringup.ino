@@ -1,7 +1,7 @@
 /* ============================================================================
  * RC Logging Current Meter - Rev A board bring-up diagnostic
  * ----------------------------------------------------------------------------
- *   VERSION 2.1          LAST UPDATED 2026-08-25 22:40 EDT
+ *   VERSION 2.1          LAST UPDATED 2026-09-05 12:40 EDT
  *
  *   The banner printed at boot repeats this stamp AND the compiler's own build
  *   time, so you can confirm from the serial log that the board is running the
@@ -9,16 +9,16 @@
  *   you have the wrong copy; if the BUILT time is stale, the IDE did not
  *   recompile.
  *
- *   2.1  2026-08-25  Thermistor refined: B=3836.6 from the run with BOTH
+ *   2.1  2026-09-05  Thermistor refined: B=3836.6 from the run with BOTH
  *                    ends verified, R25=97988 still anchored on the dry
  *                    FNIRSI point. Taking each parameter from the run that
  *                    measured it best removes a systematic ~0.7 C warm bias.
- *   2.0  2026-08-25  Thermistor FITTED: B=3893.8, R25=97804, from 22.1 C
+ *   2.0  2026-09-05  Thermistor FITTED: B=3893.8, R25=97804, from 22.1 C
  *                    and 99.0 C. The ice bath was abandoned - three tries
  *                    all produced resistances implying ~16 C, and 77 C of
  *                    spread settles B just as well. All four analog
  *                    channels now have measured constants.
- *   1.9  2026-08-25  NTC fit now rejects physically implausible results
+ *   1.9  2026-09-05  NTC fit now rejects physically implausible results
  *                    (+/-15% on B, +/-25% on R25) instead of printing them
  *                    as if they were usable, and says what to check. A fit
  *                    returning R25=57k for a part the DMM reads at 111k

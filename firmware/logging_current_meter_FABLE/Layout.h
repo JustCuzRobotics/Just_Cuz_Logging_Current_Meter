@@ -30,14 +30,14 @@ enum { HOME_LIVE, HOME_GRAPH, HOME_LOG, HOME_TEST, HOME_SETTINGS, HOME_N };
 inline const Target HOME_T[HOME_N] = {
   { { 20,  44, 213, 121}, { 14,  38, 225, 133} },
   { {247,  44, 213, 121}, {241,  38, 225, 133} },
-  { { 20, 179, 137, 121}, { 14, 173, 149, 133} },   /* Log — disabled stub */
+  { { 20, 179, 137, 121}, { 14, 173, 149, 133} },   /* Log                 */
   { {171, 179, 137, 121}, {165, 173, 149, 133} },
   { {322, 179, 138, 121}, {316, 173, 150, 133} },
 };
 inline const char *const HOME_LABEL[HOME_N] = { "LIVE VIEW", "GRAPH", "LOG", "TEST MODE", "SETTINGS" };
 inline const char *const HOME_SUB[HOME_N]   = { "V I T W ENERGY", "SCALED PLOT, PEAKS",
-                                                "START/STOP", "ESC SIGNAL + CYCLE", "THEME FILTER DEV" };
-inline const bool HOME_DISABLED[HOME_N]     = { false, false, true, false, false };
+                                                "SD + USB STREAM", "ESC SIGNAL + CYCLE", "THEME FILTER DEV" };
+inline const bool HOME_DISABLED[HOME_N]     = { false, false, false, false, false };
 
 /* ------------------------------------------------------------- LIVE VIEW -- */
 inline const JCRRect LIVE_TIMER_BOX = { 348,   8,  86, 30 };
@@ -167,9 +167,55 @@ inline const Target SET_T[SET_BTN_N] = {
   { {252, 258, 216, 40}, {240, 252, 240, 68} },   /* dev mode                */
 };
 
+/* ------------------------------------------------------------------ LOG --
+ * Same two-column grid as Test Mode's cycle rows. Top: four steppers (mode,
+ * rate, trigger threshold, duration). Middle: status on the left, USB stream
+ * / save / remount on the right. Foot: START / STOP LOG, full width, like
+ * START CYCLE — the one control a hand reaches for without looking.
+ * Steppers here use 38 px buttons so the value box is 128 px: "CURRENT" in
+ * RUSSO16 is 121 px. */
+#define LOG_TITLE_CX 240
+inline const JCRRect LOG_BOX[4] = { { 56,  56, 128, 32}, {296,  56, 128, 32},
+                                    { 56, 112, 128, 32}, {296, 112, 128, 32} };
+inline const char *const LOG_BOX_LABEL[4] = { "LOG MODE", "RATE",
+                                              "AUTO START ABOVE", "DURATION" };
+#define LOG_Y_ROW1_LBL   44
+#define LOG_Y_ROW2_LBL  100
+#define LOG_Y_DIVIDER   154
+#define LOG_STATUS_X     12
+#define LOG_Y_STATE     164     /* 5x7 at scale 2                          */
+#define LOG_Y_LINE2     186     /* then 5x7 scale 1 lines, 14 px apart     */
+#define LOG_STATUS_CHARS 37     /* 222 px of 5x7 — stops short of x = 240  */
+
+enum { LOG_BACK,
+       LOG_MODE_M, LOG_MODE_P, LOG_RATE_M, LOG_RATE_P,
+       LOG_THR_M,  LOG_THR_P,  LOG_DUR_M,  LOG_DUR_P,
+       LOG_USB, LOG_SAVE, LOG_MOUNT, LOG_START, LOG_BTN_N };
+inline const Target LOG_T[LOG_BTN_N] = {
+  { {  8,   8,  52, 30}, {  0,   0,  90, 44} },   /* Back                    */
+  { { 12,  56,  38, 32}, {  0,  50,  53, 46} },   /* mode -                  */
+  { {190,  56,  38, 32}, {187,  50,  53, 46} },   /* mode +                  */
+  { {252,  56,  38, 32}, {240,  50,  53, 46} },   /* rate -                  */
+  { {430,  56,  38, 32}, {427,  50,  53, 46} },   /* rate +                  */
+  { { 12, 112,  38, 32}, {  0, 106,  53, 44} },   /* threshold -             */
+  { {190, 112,  38, 32}, {187, 106,  53, 44} },   /* threshold +             */
+  { {252, 112,  38, 32}, {240, 106,  53, 44} },   /* duration -              */
+  { {430, 112,  38, 32}, {427, 106,  53, 44} },   /* duration +              */
+  { {252, 164, 104, 36}, {244, 158, 114, 46} },   /* USB stream toggle       */
+  { {364, 164, 104, 36}, {358, 158, 122, 46} },   /* save                    */
+  { {252, 208, 216, 36}, {244, 204, 236, 46} },   /* remount SD              */
+  { { 12, 258, 456, 42}, {  0, 252, 480, 68} },   /* START / STOP LOG        */
+};
+
 /* ------------------------------------------------------- ESC INDICATOR --
  * A 4 px amber strip along the very top edge, drawn on every screen while
  * the ESC output is armed. Every control on every screen starts at y >= 6,
  * so this can never collide with one — which matters more than elegance for
  * a warning that a motor may be about to spin. */
 inline const int16_t ESC_BAR_H = 4;
+
+/* ------------------------------------------------------- LOG INDICATOR --
+ * The same idea along the BOTTOM edge: solid red while a log is recording,
+ * dashed red while CURRENT mode is armed and waiting. Every control's visual
+ * rect ends at y <= 312, so rows 316-319 are free on every screen. */
+inline const int16_t LOG_BAR_H = 4;

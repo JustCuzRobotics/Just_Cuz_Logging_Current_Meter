@@ -8,6 +8,88 @@ notes with light editing.
 
 <!-- Newest entries go directly below this line. -->
 
+## v3.2 — 2026-09-16
+
+### firmware: v3.2 — fix ESC pulse timing, add SD logging and USB stream
+
+**Why:** Test Mode was bench-tried with two ESCs: one armed, the other never responded,
+and after a power cycle neither would arm — while both worked from a WM150 servo tester.
+Reading arduino-pico's `wiring_analog.cpp` (checked in 6.1.0 and current master) found the
+cause: `analogWriteFreq()` clamps anything under 100 Hz up to 100 Hz with only a
+`DEBUGCORE` message. v3.1 asked for 50 Hz with `analogWriteRange(20000)`, so the slice ran
+a 10 ms frame across 20000 counts and **every pulse was half width** — 1000 µs idle came out
+as 500 µs, 2000 µs as 1000 µs. The same mismatch also re-initialised the slice on every
+`applyPwm()`. Separately, the serial `e` key armed at 1500 µs, and the ARM button armed at
+whatever the set point was, and ESCs refuse to arm when their first frames carry throttle.
+Logging to SD and a live USB stream were the other two items for the day; the meter will
+often run in a test box driven by a normal receiver with nobody at the screen, which set
+the trigger design.
+
+**Changes**
+
+- `EscOut.h/.cpp` — the slice is driven through the Pico SDK: divider `clk_sys / 1 MHz`
+  (8.4 fixed point, exact at 133 and 125 MHz), `TOP = period − 1`, `CC = pulse`, counter
+  reset on arm. TOP/CC are latched at period end, so changes never produce a runt pulse.
+  Disarm drives the pin low as SIO (value and direction set before the function switch).
+  **Arming always emits 1000 µs for `ESC_ARM_HOLD_MS` (2 s)** and resets the set point to
+  idle; stepper presses during the hold are remembered and applied when it ends; a cycle
+  started while disarmed arms, holds, then begins at its low phase. `gEscOutUs` publishes
+  the pulse on the pin for the log. `escPrintPwm()` reads the slice registers back.
+- `Sampler.h/.cpp` — one `LogRec` per tick (seq, time, raw + filtered I and V, temperature,
+  ESC pulse, raw power, cumulative mAh/Wh, energy epoch) pushed into a 512-record SPSC ring
+  at the end of `samplerTick()`; on overflow the new record is dropped and counted. An
+  energy reset now bumps `gEnergyEpoch` and restarts from the reset tick's own increment
+  instead of zero, so that tick is not lost.
+- `Logger.h/.cpp` — new, core 0. SdFat (`SdFs`) on SPI0 with `SHARED_SPI | USER_SPI_BEGIN`
+  at 16 MHz; mount runs a write/read-back test (MISO sharing, `DESIGN.md` §11) and scans for
+  the next `LOGnnnn.CSV`. No pre-allocation — SdFat's `preAllocate()` sets the full file size
+  immediately, which would leave junk after the data on a power pull. 8 KB line buffer
+  written in 512 B blocks (drain stops and leaves records in the ring if the card falls
+  behind), sync every 2 s. Triggers: MANUAL, CYCLE (edge of `escCycling()`), CURRENT (raw
+  current ≥ threshold for 3 ticks, 0.5 s pre-trigger history, re-arm after 2 s below).
+  Duration 0–15 min; a trigger-started log with no limit ends 10 s below threshold. Log
+  start requests the energy/timer reset and skips ring records from the previous epoch;
+  file energy accumulates per-record deltas across epochs, so a Live View reset mid-log
+  cannot make the total jump. Automatic starts never mount (a no-card mount blocks core 0
+  ~2 s). Any SD failure closes the log, unmounts, shows `SD ERROR` and re-arms CURRENT
+  mode. USB stream: same rows without energy, `availableForWrite()`-guarded, drops counted.
+- `ScreenLog.cpp` — new. Mode / rate / threshold / duration steppers (locked while
+  recording), status (state, file, time, rows + drops, card + USB drops), USB toggle, SAVE
+  (refused while recording), REMOUNT SD, START/STOP LOG. Threshold box dims outside
+  CURRENT mode.
+- `Layout.h`, `Screens.*`, `ScreenHome.cpp`, `Widgets.*` — LOG tile enabled and routed;
+  `LOG_T` targets (boot overlap check included); `logBar` red strip on the bottom 4 px of
+  every screen (solid recording, dashed armed).
+- `Settings.h/.cpp` — blob v2 adds log mode, rate, duration, threshold (1–50 A, default 5)
+  and stream-at-boot. A v1 (v3.1c) blob is migrated rather than discarded.
+- `ScreenTest.cpp` — status shows `ARMING - IDLE Ns`; the pulse box turns amber only once
+  the set point is actually on the pin. `ScreenSettings.cpp` — SAVE refused while recording;
+  calibration dump lines `#`-prefixed.
+- `logging_current_meter_FABLE.ino` — v3.2 header; `logBegin()` after core 1 is released so
+  a no-card mount does not freeze boot; `logTick()`/`logBarTick()` in `loop()`; keys `e`
+  (arm at idle), `p`, `s`, `g`, `m`; every non-data serial line prefixed `#`.
+  `Version.h` — new, shared version string. `Theme.cpp` — `#` prefix.
+- `tools/capture_stream.py` — new. pyserial capture: auto-detects VID 0x2E8A, turns the
+  stream on if no data arrives, adds `pc_time`, echoes `#` lines.
+
+**Verified:** compiles clean against arduino-pico 6.1.0 (`waveshare_rp2040_zero`, warnings
+on): 132 KB flash, 48.5 KB RAM. The logger was compiled on the host against stub SdFat /
+Serial under AddressSanitizer + UBSan and driven with synthetic ticks: manual log (760
+rows, 27.7 mAh for 10 A × 10 s), CURRENT trigger at 30 A with pre-trigger rows from
+−455 ms, 60 s duration cut-off (506 mAh), no retrigger while still above threshold, re-arm
+after 2 s low, write failure → `SD ERROR` → remount → armed again, no mount attempt with
+no card, CYCLE start/stop, stream format. An independent review pass found nine issues
+(CURRENT mode never re-arming after an SD failure, a 2 s core-0 freeze on an automatic
+start with no card, buffer drops before ring drops, Settings SAVE not blocked while
+recording, a 1-byte header margin, pre-reset rows at t = 0, a lost energy tick per reset,
+a stale threshold-box colour, a shrinking drop count); all fixed before this commit.
+**Not bench-verified.**
+
+**Open:** scope GP1 against `p` (expect 20000 µs / 1000 µs at defaults); confirm both
+ESCs arm; card read-back with a card in the slot; one log per mode; whether 16 MHz SD
+clock is reliable over the FPC; the unexplained "neither arms after power cycle" symptom if
+it survives the timing fix (3.3 V signal level vs the WM150's, power-up order).
+
 ## v3.1c — 2026-09-08
 
 ### firmware: v3.1c — Test Mode, Settings, themes, V/I filter, touch harness

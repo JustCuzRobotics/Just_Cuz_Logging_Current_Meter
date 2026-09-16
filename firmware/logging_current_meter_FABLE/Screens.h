@@ -16,7 +16,7 @@
 #include <JCR_TouchScreen.h>
 #include "Layout.h"
 
-enum ScreenId { SCR_HOME, SCR_LIVE, SCR_GRAPH, SCR_TEST, SCR_SETTINGS, SCR_DEV };
+enum ScreenId { SCR_HOME, SCR_LIVE, SCR_GRAPH, SCR_TEST, SCR_SETTINGS, SCR_DEV, SCR_LOG };
 extern ScreenId gScreen;
 
 void   paintScreen(ScreenId s);
@@ -57,6 +57,11 @@ void settingsSetPressed(int8_t id, bool pressed);
 void settingsDispatch(int8_t id);
 void settingsApplyFilter();          /* push gSet.filterIndex to the sampler */
 void dumpCalibrationToSerial();      /* what the Calibrate screen used to be */
+
+void paintLogOnce();
+void updateLogTick(bool forceClear = false);
+void logSetPressed(int8_t id, bool pressed);
+void logDispatch(int8_t id);
 
 void paintDevOnce();
 void updateDevTick(bool forceClear = false);

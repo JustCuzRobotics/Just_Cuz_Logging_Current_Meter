@@ -68,6 +68,7 @@ void homeDispatch(int8_t id) {
   switch (id) {
     case HOME_LIVE:  goTo(SCR_LIVE);  break;
     case HOME_GRAPH: goTo(SCR_GRAPH); break;
+    case HOME_LOG:      goTo(SCR_LOG);      break;
     case HOME_TEST:     goTo(SCR_TEST);     break;
     case HOME_SETTINGS: goTo(SCR_SETTINGS); break;
   }

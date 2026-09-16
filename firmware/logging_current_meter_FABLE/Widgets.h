@@ -72,6 +72,10 @@ void t5Centered(const JCRRect &r, const char *s, uint16_t fg, uint16_t bg, uint8
 void escBarPaint();
 void escBarTick();
 
+/* ---- log indicator: bottom strip, see Layout.h ---- */
+void logBarPaint();
+void logBarTick();
+
 /* ---- toast: bottom-centre, timed, non-blocking ---- */
 void showToast(const char *msg);
 void updateToast();

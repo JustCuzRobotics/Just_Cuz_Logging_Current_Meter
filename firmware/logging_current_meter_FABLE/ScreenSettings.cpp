@@ -17,20 +17,21 @@
 #include "Settings.h"
 #include "Sampler.h"
 #include "Config.h"
+#include "Logger.h"
 
 /* ---- the calibration dump (formerly ScreenCal.cpp) -------------------- */
 
 void dumpCalibrationToSerial() {
-  Serial.println(F("---- calibration constants ----"));
-  Serial.printf("V_GAIN_CAL      %.8f  %s\n", V_GAIN_CAL,      V_CAL_VALID  ? "FITTED"   : "NOMINAL");
-  Serial.printf("V_OFFSET_CAL    %.5f  %s\n", V_OFFSET_CAL,    V_CAL_VALID  ? "FITTED"   : "NOMINAL");
-  Serial.printf("I_QUIESCENT_CAL %.6f  %s\n", I_QUIESCENT_CAL, I_ZERO_VALID ? "MEASURED" : "NOMINAL");
-  Serial.printf("I_SENS_CAL      %.8f  %s\n", I_SENS_CAL,      I_GAIN_VALID ? "FITTED"   : "NOMINAL");
-  Serial.printf("RV1_OHMS        %.1f  MEASURED\n", RV1_OHMS);
-  Serial.printf("NTC_B           %.1f  FITTED\n",   NTC_B);
-  Serial.printf("NTC_R25         %.1f  ANCHORED\n", NTC_R25);
-  Serial.println(F("Recalibrate with display_bringup's serial v/i/n routines,"));
-  Serial.println(F("then paste the results into Config.h and reflash."));
+  Serial.println(F("# ---- calibration constants ----"));
+  Serial.printf("# V_GAIN_CAL      %.8f  %s\n", V_GAIN_CAL,      V_CAL_VALID  ? "FITTED"   : "NOMINAL");
+  Serial.printf("# V_OFFSET_CAL    %.5f  %s\n", V_OFFSET_CAL,    V_CAL_VALID  ? "FITTED"   : "NOMINAL");
+  Serial.printf("# I_QUIESCENT_CAL %.6f  %s\n", I_QUIESCENT_CAL, I_ZERO_VALID ? "MEASURED" : "NOMINAL");
+  Serial.printf("# I_SENS_CAL      %.8f  %s\n", I_SENS_CAL,      I_GAIN_VALID ? "FITTED"   : "NOMINAL");
+  Serial.printf("# RV1_OHMS        %.1f  MEASURED\n", RV1_OHMS);
+  Serial.printf("# NTC_B           %.1f  FITTED\n",   NTC_B);
+  Serial.printf("# NTC_R25         %.1f  ANCHORED\n", NTC_R25);
+  Serial.println(F("# Recalibrate with display_bringup's serial v/i/n routines,"));
+  Serial.println(F("# then paste the results into Config.h and reflash."));
 }
 
 /* ---- chrome ---------------------------------------------------------- */
@@ -135,6 +136,8 @@ void settingsDispatch(int8_t id) {
       return;
 
     case SET_SAVE:
+      /* A flash commit pauses core 1 — never in the middle of a capture. */
+      if (logRecording()) { showToast("Stop the log before saving"); return; }
       showToast(settingsSave() ? "Settings saved to flash" : "Save FAILED");
       return;
 

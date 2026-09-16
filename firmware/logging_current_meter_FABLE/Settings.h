@@ -22,6 +22,20 @@
 extern const uint8_t FILTER_SAMPLES[FILTER_OPTION_COUNT];   /* {0,2,4,6,8,10,15,20} */
 uint16_t filterWindowMs(uint8_t optionIndex);
 
+/* ---- logging options (v2) ----
+ * Rate is a decimation of the 13.158 ms sample tick, so every rate is an
+ * exact subset of the same samples: 76 / 38 / 15.2 / 7.6 / 1.0 Hz. */
+#define LOG_RATE_COUNT 5
+extern const uint8_t  LOG_RATE_DECIM[LOG_RATE_COUNT];     /* {1,2,5,10,76}     */
+extern const char *const LOG_RATE_LABEL[LOG_RATE_COUNT];  /* "76","38",...    */
+#define LOG_DUR_COUNT 7
+extern const uint8_t  LOG_DUR_MIN[LOG_DUR_COUNT];         /* {0,1,2,3,5,10,15} */
+#define LOG_THRESH_MIN_A   1
+#define LOG_THRESH_MAX_A  50
+
+enum LogMode : uint8_t { LOGMODE_MANUAL = 0, LOGMODE_CYCLE = 1, LOGMODE_CURRENT = 2,
+                         LOGMODE_COUNT = 3 };
+
 struct Settings {
   uint8_t  theme;          /* ThemeId                                      */
   uint8_t  filterIndex;    /* index into FILTER_SAMPLES                    */
@@ -29,6 +43,13 @@ struct Settings {
   uint16_t escPeriodUs;    /* frame period, 20000 = 50 Hz                  */
   uint16_t cycleLoUs, cycleHiUs;
   uint16_t cycleLoMs, cycleHiMs;   /* dwell at each end                    */
+  /* ---- v2 ---- */
+  uint8_t  logMode;        /* LogMode                                      */
+  uint8_t  logRateIdx;     /* index into LOG_RATE_DECIM                    */
+  uint8_t  logDurIdx;      /* index into LOG_DUR_MIN; 0 = until stopped    */
+  uint8_t  logThreshA;     /* CURRENT mode start threshold, whole amps     */
+  uint8_t  streamOn;       /* USB CSV stream enabled at boot               */
+  uint8_t  _pad[3];
 };
 
 extern Settings gSet;
