@@ -144,7 +144,14 @@ class MeterLog:
             raise ValueError("no t_ms column - not a Logging Current Meter log")
         for c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-        df = df.dropna(subset=["t_ms"]).reset_index(drop=True)
+        # A log that was never stopped (power pulled, card removed) usually ends
+        # in a half-written row, e.g. "19747,5.65,5.47,24.62,24.63," - its energy
+        # columns are blank. Drop any row missing a core column so it can't turn
+        # the totals into NaN, and remember how many went.
+        core = [c for c in ("t_ms", "i_raw", "v_raw", "mah", "wh") if c in df.columns]
+        n_before = len(df)
+        df = df.dropna(subset=core).reset_index(drop=True)
+        self.meta["dropped_rows"] = n_before - len(df)
         if df.empty:
             raise ValueError("no data rows")
 
@@ -182,8 +189,8 @@ class MeterLog:
             run = df
 
         runtime_s = run["t_s"].max() - max(run["t_s"].min(), 0.0)
-        mah = float(run["mah"].iloc[-1])
-        wh = float(run["wh"].iloc[-1])
+        mah = float(run["mah"].dropna().iloc[-1]) if run["mah"].notna().any() else 0.0
+        wh = float(run["wh"].dropna().iloc[-1]) if run["wh"].notna().any() else 0.0
 
         i_peak_idx = run["i_raw"].idxmax()
         peak_i = float(run.loc[i_peak_idx, "i_raw"])
@@ -224,6 +231,7 @@ class MeterLog:
             "rate": self.meta.get("rate", "-"),
             "end_reason": self.end.get("reason", "INCOMPLETE (no end line)"),
             "rows": len(df),
+            "dropped_partial_rows": self.meta.get("dropped_rows", 0),
             "ring_drops": self.end.get("ring_drops", "-"),
             "buffer_drops": self.end.get("buffer_drops", "-"),
             "i_gain_nominal": self.meta.get("i_gain_nominal", False),
@@ -250,7 +258,10 @@ class MeterLog:
         if m["i_gain_nominal"]:
             lines.append("Note: current gain not calibrated")
         if m["end_reason"].startswith("INCOMPLETE"):
-            lines.append("Note: log incomplete (no end line)")
+            extra = (f", {m['dropped_partial_rows']} partial row dropped"
+                     if m["dropped_partial_rows"] == 1 else
+                     f", {m['dropped_partial_rows']} partial rows dropped" if m["dropped_partial_rows"] else "")
+            lines.append(f"Note: log incomplete (no end line{extra})")
         return "\n".join(lines)
 
     # ---------------------------------------------------------------- charts

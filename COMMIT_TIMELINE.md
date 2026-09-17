@@ -41,7 +41,10 @@ graphs and stats saved automatically.
 trigger ×2, cycle, manual, and a manual log with its end line removed) plus a synthetic USB
 capture; all charts rendered and inspected; runtime rounding fixed (59.96 s showed as
 "0:60.0"); GUI driven under Xvfb with Python 3.12 — open folder → 5 logs listed → compare 2.
-Not yet run on Windows or on real bench logs.
+First real bench log (LOG_02_MANUAL_22.8V, not stopped before power-off) showed "nan mAh / nan
+Wh": its last row was half-written, leaving blank energy columns that the stats read. Rows missing
+t_ms/i_raw/v_raw/mah/wh are now dropped (counted in the summary as `dropped_partial_rows` and noted
+in the stats box), and totals use the last valid value.
 
 ### firmware: v3.2a — descriptive log file names, clearer LOG steppers
 
