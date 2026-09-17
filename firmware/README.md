@@ -173,8 +173,9 @@ routines (Settings → DUMP prints the current ones over serial). `Layout.h` hol
 pixel coordinate and touch target, so retargeting to another panel size is one file.
 `Sampler.*` is the core-1 ADC, the V/I weighted-moving-average filter and the graph ring;
 `Settings.*` the user settings and their EEPROM persistence (explicit Save only — a flash
-write halts both cores for a few ms); `EscOut.*` the ESC servo signal on GP1 (Pico SDK PWM
-at 1 µs per count, OFF at boot, always arms at idle with a 2 s hold); `Logger.*` the SD
+write halts both cores for a few ms); `EscOut.*` the ESC servo signal on GP1 (the core's
+Servo library — PIO, `writeMicroseconds()`, fixed 50 Hz — OFF at boot, always arms at idle
+with a 2 s hold); `Logger.*` the SD
 log, its triggers and the USB stream; `Version.h` the version string the banner and log
 headers share; `Theme.*` the
 two palettes behind the `COL_*` macros; `Widgets.*` the button chrome and cached fields;
@@ -189,8 +190,8 @@ two palettes behind the `COL_*` macros; `Widgets.*` the button chrome and cached
 | `t` | re-initialise the touch controller from core 1 |
 | `L` | synthetic ~60 ms core-0 load per loop |
 | `f` | filter 0 ↔ 20 samples |
-| `e` | ESC output arm (idle 1000 µs, 2 s hold) / disarm, then prints the PWM registers |
-| `p` | print the ESC PWM slice registers — divider, TOP, level, and the period/pulse they make |
+| `e` | ESC output arm (idle 1000 µs, 2 s hold) / disarm, then prints the ESC state |
+| `p` | print the ESC state — attached, set point, pulse on the pin, hold/cycle |
 | `s` | USB CSV stream on/off (not saved — the LOG screen's SAVE persists it) |
 | `g` | SD log start / stop |
 | `m` | remount the SD card (runs the read-back test) |
@@ -210,9 +211,12 @@ v3.1 drove GP1 with `analogWriteFreq(1e6/period)` + `analogWriteRange(period)`. 
 clamps `analogWriteFreq()` to ≥ 100 Hz, silently**, so the 50 Hz frame ran at 100 Hz on a
 20000-count range and every pulse was half width: "1000 µs idle" was 500 µs, "2000 µs"
 was 1000 µs (any frame longer than 10 ms was scaled by 10000/period). Some ESCs reject a
-500 µs pulse and never arm; others accept it as zero throttle. v3.2 drives the slice
-through the SDK directly at 1 µs per count, and `p` reads the registers back — check the
-waveform on a scope against that line before trusting a test.
+500 µs pulse and never arm; others accept it as zero throttle. v3.2 uses arduino-pico's
+bundled **Servo** library instead (PIO state machine, `writeMicroseconds()`), which is what
+this should have used from the start. Its frame is fixed at 20 ms (50 Hz, a compile-time
+constant in the library), so Test Mode's frame-period stepper is gone. It is attached as
+`attach(pin, 1000, 2000, 1000)`: plain `attach(pin)` starts at 1500 µs. Check the waveform
+on a scope before trusting a test — expect a 20 ms frame and a 1000 µs pulse after arming.
 
 Arming now always emits 1000 µs for 2 s before the set point or a cycle applies, and the
 set point resets to idle on arm. ESCs refuse to arm when their first frames carry
@@ -226,10 +230,12 @@ every screen shows a log recording (solid) or CURRENT mode armed (dashed).
 
 | Setting | Options |
 |---|---|
-| Mode | **MANUAL** (START/STOP or serial `g`) · **CYCLE** (Test Mode START CYCLE opens a log, STOP closes it) · **CURRENT** (starts when raw current > threshold for 3 ticks) |
-| Rate | 76 / 38 / 15 / 7.6 / 1 Hz — decimations of the 13.158 ms tick |
+| Mode (◀ ▶, wraps) | **MANUAL** (START/STOP or serial `g`) · **CYCLE** (Test Mode START CYCLE opens a log, STOP closes it) · **CURRENT** (starts when raw current > threshold for 3 ticks) |
+| Rate | 76 / 38 / 15 / 7.6 / 1 Hz — decimations of the 13.158 ms tick (+ is faster) |
 | Auto start above | 1–50 A, default **5 A** (CURRENT mode) |
 | Duration | no limit, 1, 2, 3, 5, 10, 15 min — ends any log |
+
+A stepper button that can go no further in its direction is greyed out.
 
 - **Starting a log resets the energy counters and run timer**, so Live View and the file agree.
 - CURRENT mode keeps **~0.5 s before the trigger** (negative `t_ms`), then re-arms only after
@@ -239,7 +245,10 @@ every screen shows a log recording (solid) or CURRENT mode armed (dashed).
 - An automatic start with no card mounted is **skipped, not mounted** — a failed mount
   blocks core 0 for ~2 s, which is not acceptable while a motor spins up. Insert the card and
   press REMOUNT SD (or serial `m`).
-- Files `LOG0001.CSV` upward. Not pre-allocated (a power pull would otherwise leave
+- Files are named `LOG_<n>_<MODE>_<V>V.CSV`, e.g. `LOG_07_CURRENT_22.4V.CSV`. `n` counts up
+  from the highest number already on the card (no RTC, so `n` is the order), `MODE` is the
+  log-mode setting, and `V` is the pack voltage at the start — for a current trigger, the
+  resting voltage just before the load came on, not the sag. Not pre-allocated (a power pull would otherwise leave
   megabytes of junk after the data); 512 B block writes, synced every 2 s. Mounting runs a
   write/read-back test, because the card shares MISO with the LCD (`DESIGN.md` §11).
 
@@ -260,6 +269,10 @@ rows, totals, peaks and drop counts. pandas: `pd.read_csv(f, comment="#")`.
 ```
 t_ms,i_raw,i_filt,v_raw,v_filt,w,t_c,esc_us
 ```
+
+**Graphs:** `python tools\log_analyzer.py` (needs `pip install pandas numpy matplotlib seaborn`)
+opens a picker for a log file or a folder of logs and saves charts, a summary CSV and run
+comparisons to a `Log Graphs` folder beside them.
 
 A line that does not fit the USB buffer is dropped and counted (`USB DROP` on the LOG
 screen), never waited for. On a PC: `pip install pyserial`, then

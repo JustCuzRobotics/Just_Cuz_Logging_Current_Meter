@@ -1,27 +1,22 @@
 /* ==========================================================================
- * EscOut.cpp — see EscOut.h for the design rationale, including why this no
- * longer uses analogWrite().
+ * EscOut.cpp — see EscOut.h for the design rationale.
  * ========================================================================*/
 #include "EscOut.h"
 #include "Config.h"
 #include "Settings.h"
-#include <hardware/pwm.h>
-#include <hardware/clocks.h>
+#include <Servo.h>
 #include <hardware/gpio.h>
 
 volatile uint16_t gEscOutUs = 0;
 
+static Servo    sServo;
 static bool     sArmed    = false;
 static bool     sHolding  = false;
 static bool     sCycling  = false;
 static bool     sAtHigh   = false;
 static uint16_t sPulseUs  = ESC_PULSE_MIN_US;   /* set point               */
-static uint16_t sPeriodUs = 20000;
 static uint32_t sHoldEndMs  = 0;
 static uint32_t sPhaseEndMs = 0;
-
-static inline uint8_t slice()   { return (uint8_t)pwm_gpio_to_slice_num(PIN_ESC_SIG); }
-static inline uint8_t channel() { return (uint8_t)pwm_gpio_to_channel(PIN_ESC_SIG); }
 
 /* ---- helpers ---------------------------------------------------------- */
 
@@ -31,44 +26,19 @@ static uint16_t clampPulse(uint16_t us) {
   return us;
 }
 
-static uint16_t clampPeriod(uint16_t us) {
-  if (us < ESC_PERIOD_MIN_US) return ESC_PERIOD_MIN_US;
-  if (us > ESC_PERIOD_MAX_US) return ESC_PERIOD_MAX_US;
-  return us;
-}
-
-/* Only ever called while armed. CC is latched by the RP2040 at the end of the
- * current period, so this cannot shorten or split a frame in progress. */
+/* Only ever called while armed. The library clears any not-yet-used value
+ * from the PIO FIFO, so the newest set point is what the next frame carries. */
 static void setLevel(uint16_t us) {
-  pwm_set_chan_level(slice(), channel(), us);
+  sServo.writeMicroseconds(us);
   gEscOutUs = us;
 }
 
-/* One-time slice setup on arm: 1 us per count. The divider is 8.4 fixed
- * point, so it is computed in sixteenths and rounded — exact whenever clk_sys
- * is a whole number of MHz, which covers every clock arduino-pico uses. */
-static void pwmStart(uint16_t firstPulseUs) {
-  uint8_t s = slice();
-  uint32_t sysHz = clock_get_hz(clk_sys);
-  uint32_t div16 = (uint32_t)(((uint64_t)sysHz * 16ULL + 500000ULL) / 1000000ULL);
-  pwm_set_enabled(s, false);
-  pwm_set_clkdiv_int_frac(s, (uint8_t)(div16 >> 4), (uint8_t)(div16 & 0x0F));
-  pwm_set_wrap(s, (uint16_t)(sPeriodUs - 1));
-  pwm_set_chan_level(s, channel(), firstPulseUs);
-  pwm_set_counter(s, 0);                 /* first frame is a whole frame     */
-  gpio_set_function(PIN_ESC_SIG, GPIO_FUNC_PWM);
-  pwm_set_enabled(s, true);
-  gEscOutUs = firstPulseUs;
-}
-
-static void pwmStop() {
-  /* Output value and direction first, THEN hand the pin back to SIO, so it
-   * goes straight from PWM to a driven LOW. (gpio_init() would pass through
-   * a high-impedance input on the way.) Then stop the slice. */
+static void pinLow() {
+  /* Value and direction first, then hand the pin to SIO, so it goes straight
+   * to a driven LOW rather than passing through a floating input. */
   gpio_put(PIN_ESC_SIG, 0);
   gpio_set_dir(PIN_ESC_SIG, GPIO_OUT);
   gpio_set_function(PIN_ESC_SIG, GPIO_FUNC_SIO);
-  pwm_set_enabled(slice(), false);
   gEscOutUs = 0;
 }
 
@@ -88,9 +58,8 @@ static void beginCycleLowPhase() {
 
 void escBegin() {
   sArmed = sHolding = sCycling = sAtHigh = false;
-  sPulseUs  = ESC_PULSE_MIN_US;           /* never boot anywhere but idle    */
-  sPeriodUs = clampPeriod(gSet.escPeriodUs);
-  pwmStop();
+  sPulseUs = ESC_PULSE_MIN_US;            /* never boot anywhere but idle    */
+  pinLow();
 }
 
 /* ---- manual ----------------------------------------------------------- */
@@ -98,14 +67,20 @@ void escBegin() {
 void escArm(bool on) {
   if (on == sArmed) return;
   if (on) {
+    sPulseUs = ESC_PULSE_MIN_US;          /* set point resets to idle        */
+    /* Explicit initial value: attach(pin) alone would start at 1500 us. */
+    if (sServo.attach(PIN_ESC_SIG, ESC_PULSE_MIN_US, ESC_PULSE_MAX_US, ESC_PULSE_MIN_US) < 0) {
+      pinLow();                           /* no free PIO state machine       */
+      return;
+    }
     sArmed   = true;
     sHolding = true;
-    sPulseUs = ESC_PULSE_MIN_US;          /* set point resets to idle        */
     sHoldEndMs = millis() + ESC_ARM_HOLD_MS;
-    pwmStart(ESC_PULSE_MIN_US);
+    gEscOutUs = ESC_PULSE_MIN_US;
   } else {
     sArmed = sHolding = sCycling = sAtHigh = false;
-    pwmStop();
+    sServo.detach();                      /* finishes the frame in progress  */
+    pinLow();
   }
 }
 
@@ -127,23 +102,19 @@ void escSetPulse(uint16_t us) {
 
 uint16_t escPulse() { return sPulseUs; }
 
-void escSetPeriod(uint16_t us) {
-  sPeriodUs = clampPeriod(us);
-  if (sArmed) pwm_set_wrap(slice(), (uint16_t)(sPeriodUs - 1));   /* latched */
-}
-
-uint16_t escPeriod() { return sPeriodUs; }
-
 /* ---- auto-cycle ------------------------------------------------------- */
 
 void escCycleStart() {
   if (sCycling) return;
-  sCycling = true;
-  sAtHigh  = false;
   if (!sArmed) {
     escArm(true);                 /* idle hold first; escTick starts the low phase */
-  } else if (!sHolding) {
-    beginCycleLowPhase();
+    if (!sArmed) return;
+    sCycling = true;
+    sAtHigh  = false;
+  } else {
+    sCycling = true;
+    sAtHigh  = false;
+    if (!sHolding) beginCycleLowPhase();
   }
 }
 
@@ -192,33 +163,12 @@ void escTick() {
     sPhaseEndMs = millis() + (sAtHigh ? dwellHi() : dwellLo());
 }
 
-/* ---- scope check ------------------------------------------------------ */
-
-void escPrintPwm(Print &out) {
-  uint8_t s = slice();
-  uint32_t div  = pwm_hw->slice[s].div;          /* 8.4 fixed point          */
-  uint32_t top  = pwm_hw->slice[s].top;
-  uint32_t cc   = pwm_hw->slice[s].cc;
-  uint32_t csr  = pwm_hw->slice[s].csr;
-  uint32_t lvl  = channel() ? ((cc >> 16) & 0xFFFF) : (cc & 0xFFFF);
-  uint32_t sysHz = clock_get_hz(clk_sys);
-  /* tick = div / sysHz; period = (top+1) ticks. In ns to stay integer. */
-  uint64_t tickNs16 = (uint64_t)div * 1000000000ULL / sysHz;   /* x16      */
-  uint32_t periodUs = (uint32_t)(tickNs16 * (top + 1) / 16ULL / 1000ULL);
-  uint32_t pulseUs  = (uint32_t)(tickNs16 * lvl / 16ULL / 1000ULL);
-  char line[320];
+void escPrint(Print &out) {
+  char line[160];
   snprintf(line, sizeof line,
-           "# [pwm] GP%u slice %u ch %c  en=%lu  clk_sys=%lu Hz  div=%lu+%lu/16  top=%lu  level=%lu\n"
-           "# [pwm] => period %lu us (%lu.%lu Hz), pulse %lu us   | state: %s%s%s set=%u out=%u\n",
-           (unsigned)PIN_ESC_SIG, (unsigned)s, channel() ? 'B' : 'A',
-           (unsigned long)(csr & 1), (unsigned long)sysHz,
-           (unsigned long)(div >> 4), (unsigned long)(div & 0xF),
-           (unsigned long)top, (unsigned long)lvl,
-           (unsigned long)periodUs,
-           (unsigned long)(periodUs ? 1000000UL / periodUs : 0),
-           (unsigned long)(periodUs ? (10000000UL / periodUs) % 10 : 0),
-           (unsigned long)pulseUs,
-           sArmed ? "ARMED" : "off", sHolding ? " HOLD" : "", sCycling ? " CYCLE" : "",
-           (unsigned)sPulseUs, (unsigned)gEscOutUs);
+           "# [esc] GP%u servo(PIO) %s  frame %u us (50 Hz fixed)  set=%u us  on pin=%u us%s%s\n",
+           (unsigned)PIN_ESC_SIG, sServo.attached() ? "attached" : "detached",
+           (unsigned)ESC_FRAME_US, (unsigned)sPulseUs, (unsigned)gEscOutUs,
+           sHolding && sArmed ? "  ARM HOLD" : "", sCycling ? "  CYCLE" : "");
   out.print(line);
 }

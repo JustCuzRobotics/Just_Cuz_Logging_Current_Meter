@@ -96,9 +96,11 @@ void paintTestOnce() {
   t5(12, TEST_Y_MANUAL_LBL, "MANUAL PULSE US", COL_TEXT_HI, COL_BG);
   for (uint8_t i = TEST_P_M50; i <= TEST_P_P50; i++) drawPulseStepBtn(i, false);
 
-  t5(12, TEST_Y_PERIOD_LBL, "FRAME PERIOD US", COL_TEXT_HI, COL_BG);
-  drawStepBtn(TEST_T[TEST_PER_M].vis, false, false);
-  drawStepBtn(TEST_T[TEST_PER_P].vis, false, true);
+  /* The frame is fixed by the Servo library, so this is a readout, not a
+   * stepper — shown because "what rate is the ESC seeing" is a real question
+   * when comparing against a receiver. */
+  t5(12, TEST_Y_FRAME_LBL, "SERVO FRAME", COL_TEXT_HI, COL_BG);
+  t5(12, TEST_Y_FRAME_LBL + 20, "20 MS  50 HZ", COL_TEXT, COL_BG, 2);
 
   /* auto-cycle */
   tft.drawFastHLine(12, TEST_Y_DIVIDER, 456, COL_BOX_BORDER);
@@ -114,10 +116,10 @@ void paintTestOnce() {
 }
 
 void updateTestTick(bool forceClear) {
-  static char cPulse[16], cPeriod[16], cCyc[4][16], cStatus[40];
+  static char cPulse[16], cCyc[4][16], cStatus[40];
   static bool lastArmed = false, lastCycling = false;
   if (forceClear) {
-    cPulse[0] = cPeriod[0] = cStatus[0] = 0;
+    cPulse[0] = cStatus[0] = 0;
     for (uint8_t i = 0; i < 4; i++) cCyc[i][0] = 0;
     lastArmed = escArmed(); lastCycling = escCycling();
   }
@@ -127,8 +129,6 @@ void updateTestTick(bool forceClear) {
   /* The box shows the set point; it is amber only once that is what the pin
    * is actually emitting (not during the arming hold, which emits idle). */
   drawStepperBox(TEST_PULSE_BOX, buf, (escArmed() && !escHolding()) ? COL_AMP : COL_TEXT, cPulse);
-  snprintf(buf, sizeof buf, "%u", (unsigned)escPeriod());
-  drawStepperBox(TEST_PERIOD_BOX, buf, COL_TEXT, cPeriod);
 
   for (uint8_t i = 0; i < 4; i++) {
     snprintf(buf, sizeof buf, "%u", (unsigned)*cycField(i));
@@ -176,11 +176,6 @@ void testDispatch(int8_t id) {
     case TEST_P_P10: escSetPulse((uint16_t)(escPulse() + 10)); break;
     case TEST_P_P50: escSetPulse((uint16_t)(escPulse() + 50)); break;
 
-    /* Period steps in whole milliseconds — the frame rate is a compatibility
-     * choice, not something anyone tunes by the microsecond. */
-    case TEST_PER_M: escSetPeriod((uint16_t)(escPeriod() - 1000)); break;
-    case TEST_PER_P: escSetPeriod((uint16_t)(escPeriod() + 1000)); break;
-
     case TEST_LO_M:  gSet.cycleLoUs -= 10; break;
     case TEST_LO_P:  gSet.cycleLoUs += 10; break;
     case TEST_HI_M:  gSet.cycleHiUs -= 10; break;
@@ -196,9 +191,8 @@ void testDispatch(int8_t id) {
       break;
   }
   clampCycle();
-  /* The frame period is a hardware compatibility choice, so it persists. The
-   * live pulse deliberately does NOT — settingsSave() always stores idle, so
-   * a board that boots with a motor attached never comes up under throttle. */
-  gSet.escPeriodUs = escPeriod();
+  /* The live pulse deliberately does not persist — settingsSave() always
+   * stores idle, so a board that boots with a motor attached never comes up
+   * under throttle. */
   updateTestTick();
 }

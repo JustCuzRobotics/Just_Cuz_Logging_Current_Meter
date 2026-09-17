@@ -51,7 +51,6 @@ void settingsDefaults(Settings &s) {
   s.filterIndex = 2;          /* 4 samples ≈ 53 ms — visible smoothing,
                                * still well inside a fast pull             */
   s.escPulseUs  = 1000;       /* idle. Never boot anywhere else            */
-  s.escPeriodUs = 20000;      /* 50 Hz standard servo frame                */
   s.cycleLoUs   = 1000;
   s.cycleHiUs   = 1500;
   s.cycleLoMs   = 3000;
@@ -78,12 +77,10 @@ static bool plausible(const Settings &s) {
   if (s.theme >= THEME_COUNT) return false;
   if (s.filterIndex >= FILTER_OPTION_COUNT) return false;
   if (s.escPulseUs  < 800  || s.escPulseUs  > 2500) return false;
-  if (s.escPeriodUs < 2500 || s.escPeriodUs > 50000) return false;
   if (s.cycleLoUs   < 800  || s.cycleLoUs   > 2500) return false;
   if (s.cycleHiUs   < 800  || s.cycleHiUs   > 2500) return false;
   if (s.cycleLoMs   < 100  || s.cycleLoMs   > 60000) return false;
   if (s.cycleHiMs   < 100  || s.cycleHiMs   > 60000) return false;
-  if (s.escPulseUs > s.escPeriodUs || s.cycleHiUs > s.escPeriodUs) return false;
   if (s.logMode >= LOGMODE_COUNT) return false;
   if (s.logRateIdx >= LOG_RATE_COUNT) return false;
   if (s.logDurIdx >= LOG_DUR_COUNT) return false;
@@ -114,7 +111,8 @@ void settingsBegin() {
       Settings m;
       settingsDefaults(m);
       m.theme = v1.s.theme;             m.filterIndex = v1.s.filterIndex;
-      m.escPulseUs = v1.s.escPulseUs;   m.escPeriodUs = v1.s.escPeriodUs;
+      m.escPulseUs = v1.s.escPulseUs;   /* v1's frame period is dropped:
+                                         * the Servo library's frame is fixed */
       m.cycleLoUs = v1.s.cycleLoUs;     m.cycleHiUs = v1.s.cycleHiUs;
       m.cycleLoMs = v1.s.cycleLoMs;     m.cycleHiMs = v1.s.cycleHiMs;
       if (plausible(m)) { gSet = m; s_fromFlash = true; }

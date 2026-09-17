@@ -11,13 +11,16 @@
 #include <SPI.h>
 #include <SdFat.h>
 #include <string.h>
+#include <ctype.h>
 
 static SdFs   sSd;
 static FsFile sFile;
 static bool   sMounted = false;
 static char   sCardText[32] = "NO CARD";
-static char   sFileName[16] = "";
+static char   sFileName[40] = "";   /* LOG_123_CURRENT_22.4V.CSV = 25 */
 static uint16_t sNextIndex = 1;
+static int16_t  sLastVRaw  = 0;       /* newest drained pack voltage, centivolts */
+static bool     sHaveVRaw  = false;
 
 enum StartCause : uint8_t { CAUSE_MANUAL, CAUSE_CYCLE, CAUSE_TRIGGER };
 
@@ -115,20 +118,25 @@ static void updateState() {
 
 /* ---- SD --------------------------------------------------------------- */
 
+/* Next log number = one past the highest already on the card. Recognises the
+ * current LOG_<n>_... names and the v3.2-initial LOGnnnn.CSV ones, so the
+ * count never restarts on a card that has both. */
 static void scanNextIndex() {
   sNextIndex = 1;
   FsFile root, f;
   if (!root.open("/")) return;
-  char name[32];
+  char name[64];
   while (f.openNext(&root, O_RDONLY)) {
     if (!f.isDir()) {
       f.getName(name, sizeof name);
-      /* LOGnnnn.CSV, case-insensitive */
-      if (strlen(name) == 11 && strncasecmp(name, "LOG", 3) == 0 &&
-          strcasecmp(name + 7, ".CSV") == 0) {
-        uint16_t idx = (uint16_t)atoi(name + 3);
-        if (idx >= sNextIndex) sNextIndex = (uint16_t)(idx + 1);
+      long idx = -1;
+      if (strncasecmp(name, "LOG_", 4) == 0 && isdigit((unsigned char)name[4])) {
+        idx = atol(name + 4);
+      } else if (strlen(name) == 11 && strncasecmp(name, "LOG", 3) == 0 &&
+                 strcasecmp(name + 7, ".CSV") == 0 && isdigit((unsigned char)name[3])) {
+        idx = atol(name + 3);
       }
+      if (idx >= sNextIndex && idx < 65535) sNextIndex = (uint16_t)(idx + 1);
     }
     f.close();
   }
@@ -186,7 +194,7 @@ bool logMount() {
   /* A failure path may have left the trigger disarmed; a good mount always
    * returns CURRENT mode to a clean re-arm. */
   if (gSet.logMode == LOGMODE_CURRENT && !sWaitingTrig) { sRearm = true; sBelowSinceMs = millis(); }
-  say("# [log] %s mounted, read-back OK, next file LOG%04u.CSV\n", sCardText, (unsigned)sNextIndex);
+  say("# [log] %s mounted, read-back OK, next log number %02u\n", sCardText, (unsigned)sNextIndex);
   updateState();
   return true;
 }
@@ -214,8 +222,8 @@ static void writeHeader() {
                 sFileName, sCause == CAUSE_TRIGGER ? "current trigger" : (sCause == CAUSE_CYCLE ? "cycle" : "manual"),
                 modeName(gSet.logMode), (unsigned)gSet.logThreshA, dur,
                 LOG_RATE_LABEL[gSet.logRateIdx], (unsigned)sDecim);
-  hcat(h, sizeof h, k, "# filter=%u samples (i_filt,v_filt only)  esc_period=%u us  cal: V %s, I zero %s, I gain %s\n",
-                (unsigned)FILTER_SAMPLES[gSet.filterIndex], (unsigned)escPeriod(),
+  hcat(h, sizeof h, k, "# filter=%u samples (i_filt,v_filt only)  esc_frame=%u us  cal: V %s, I zero %s, I gain %s\n",
+                (unsigned)FILTER_SAMPLES[gSet.filterIndex], (unsigned)ESC_FRAME_US,
                 V_CAL_VALID ? "fitted" : "NOMINAL", I_ZERO_VALID ? "measured" : "NOMINAL",
                 I_GAIN_VALID ? "fitted" : "NOMINAL - currents not gain-calibrated");
   hcat(h, sizeof h, k, "# t_ms from log start (negative = pre-trigger)  w = v_raw*i_raw  mah/wh since log start  esc_us 0 = output off\n");
@@ -251,10 +259,15 @@ static void flushBlocks(uint8_t maxBlocks) {
 /* `allowMount`: only a manual start may mount here. An automatic start (the
  * trigger, a cycle) fires as a motor spins up, and a mount with no card
  * blocks core 0 — UI, escTick, the DISARM button — for ~2 s. */
-static bool openNewFile(bool allowMount) {
+static bool openNewFile(bool allowMount, int16_t centivoltsAtStart) {
   if (!sMounted && !(allowMount && logMount())) return false;
+  const char *mode = modeName(gSet.logMode);
+  int32_t dv = centivoltsAtStart < 0 ? 0 : (centivoltsAtStart + 5) / 10;   /* 0.1 V */
   for (uint16_t tries = 0; tries < 50; tries++, sNextIndex++) {
-    snprintf(sFileName, sizeof sFileName, "LOG%04u.CSV", (unsigned)sNextIndex);
+    /* LOG_<n>_<MODE>_<V>V.CSV — n is at least two digits and simply grows
+     * past 99. Long names need SdFat's LFN support, which SdFs has on. */
+    snprintf(sFileName, sizeof sFileName, "LOG_%02u_%s_%ld.%ldV.CSV",
+             (unsigned)sNextIndex, mode, (long)(dv / 10), (long)(dv % 10));
     if (sFile.open(sFileName, O_WRONLY | O_CREAT | O_EXCL)) { sNextIndex++; return true; }
   }
   failWrite("CREATE");
@@ -264,9 +277,9 @@ static bool openNewFile(bool allowMount) {
 /* Shared by manual, cycle and trigger starts. Opens the file and resets the
  * energy counters; t = 0 is set by the caller (the next record, or the
  * trigger record). */
-static bool beginLog(StartCause cause) {
+static bool beginLog(StartCause cause, int16_t centivoltsAtStart) {
   sCause = cause;
-  if (!openNewFile(cause == CAUSE_MANUAL)) {
+  if (!openNewFile(cause == CAUSE_MANUAL, centivoltsAtStart)) {
     if (cause != CAUSE_MANUAL) say("# [log] auto start skipped - no card mounted\n");
     updateState();
     return false;
@@ -354,9 +367,14 @@ void logStop(const char *reason) {
   updateState();
 }
 
+/* Pack voltage for a manual/cycle file name: the newest drained sample, or
+ * the displayed value if nothing has been drained yet (a start in the first
+ * pass after boot). */
+static int16_t startVolts() { return sHaveVRaw ? sLastVRaw : gState.centivolts; }
+
 bool logStart() {
   if (sRecording || sStartReq) return true;
-  if (!beginLog(CAUSE_MANUAL)) return false;
+  if (!beginLog(CAUSE_MANUAL, startVolts())) return false;
   sStartReq = true;
   updateState();
   return true;
@@ -388,8 +406,14 @@ static void triggerSample(const LogRec &r) {
   sAboveCount = 0;
 
   /* Triggered. The first above-threshold record is t = 0; everything older in
-   * the history is pre-trigger. */
-  if (!beginLog(CAUSE_TRIGGER)) {
+   * the history is pre-trigger. The file is named with the voltage of the
+   * last sample BEFORE the load came on — the resting pack voltage, which
+   * says more about the pack than the sag at the trigger instant does. */
+  const LogRec &trigFirst = sHist[(sHistHead + HIST_N - LOG_TRIG_TICKS) % HIST_N];
+  int16_t restV = sHistCount > LOG_TRIG_TICKS
+      ? sHist[(sHistHead + HIST_N - LOG_TRIG_TICKS - 1) % HIST_N].vRaw
+      : trigFirst.vRaw;
+  if (!beginLog(CAUSE_TRIGGER, restV)) {
     sWaitingTrig = false; sRearm = true; sBelowSinceMs = millis();
     return;
   }
@@ -447,7 +471,7 @@ void logTick() {
     lastCycling = cyc;
     if (gSet.logMode == LOGMODE_CYCLE) {
       if (cyc && !sRecording && !sStartReq) {
-        if (beginLog(CAUSE_CYCLE)) sStartReq = true;
+        if (beginLog(CAUSE_CYCLE, startVolts())) sStartReq = true;
       } else if (!cyc && (sRecording || sStartReq) && sCause == CAUSE_CYCLE) {
         logStop("cycle stopped");
       }
@@ -464,6 +488,7 @@ void logTick() {
       if (sRecording && sBufLen > sizeof sBuf - 256) break;
     }
     const LogRec &r = gLogRing[gLogTail];
+    sLastVRaw = r.vRaw; sHaveVRaw = true;
 
     streamRow(r);
 

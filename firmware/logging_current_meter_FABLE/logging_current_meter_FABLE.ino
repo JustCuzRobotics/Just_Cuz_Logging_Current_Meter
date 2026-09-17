@@ -1,5 +1,5 @@
 /* ==========================================================================
- * logging_current_meter_FABLE.ino — v3.2 (2026-09-16)
+ * logging_current_meter_FABLE.ino — v3.2a (2026-09-16)
  *
  * Touchscreen UI for the Just 'Cuz Robotics Logging Current Meter (Rev A).
  * RP2040-Zero + 3.5" 480x320 ST7796/FT6336U on one FPC.
@@ -13,7 +13,7 @@
  *   Sampler.*     core-1 ADC, calibration maths, graph history ring
  *   Widgets.*     button chrome, cached fields, toast
  *   Settings.*    user settings and their flash persistence
- *   EscOut.*      ESC servo-signal output (SDK PWM, arm hold, auto-cycle)
+ *   EscOut.*      ESC servo-signal output (Servo lib/PIO, arm hold, auto-cycle)
  *   Logger.*      SD CSV logging, triggers, USB CSV stream
  *   Version.h     the version string shared by banner and log headers
  *   Screens.*     navigation and dispatch
@@ -43,12 +43,18 @@
  *
  * --------------------------------------------------------------------------
  * Version history
+ *   v3.2a 2026-09-16  Log files are named LOG_<n>_<MODE>_<V>V.CSV (n counts
+ *                     up from the highest on the card; V is the pack voltage
+ *                     at the start, or the resting voltage just before a
+ *                     current trigger). LOG MODE uses arrow buttons and wraps
+ *                     round in both directions.
  *   v3.2  2026-09-16  ESC OUTPUT WAS WRONG SINCE v3.1. arduino-pico clamps
  *                     analogWriteFreq() to >= 100 Hz without saying so, so
  *                     the 50 Hz frame ran at 100 Hz on a 20000-count range
  *                     and every pulse came out at half width (1000 us idle
- *                     was 500 us). The ESC pin now drives its PWM slice
- *                     through the Pico SDK at exactly 1 us per count, and
+ *                     was 500 us). The ESC pin now uses the core's Servo
+ *                     library (PIO, writeMicroseconds, fixed 50 Hz — the
+ *                     frame-period stepper is gone), and
  *                     arming always emits idle for 2 s before anything else
  *                     (the old 'e' key armed at 1500 us). New: SD logging
  *                     (LOG screen — manual, Test-cycle, or current-threshold
@@ -116,7 +122,7 @@
  *   L  toggle synthetic core-0 load (full-screen fill every loop)
  *   f  filter 0 <-> 20 samples
  *   e  ESC output arm (idle, 2 s hold) / disarm
- *   p  print the ESC PWM slice registers (compare with a scope)
+ *   p  print the ESC output state (set point, pulse on the pin)
  *   s  USB CSV stream on/off (not saved - use the LOG screen's SAVE)
  *   g  SD log start/stop
  *   m  remount the SD card
@@ -289,7 +295,7 @@ void loop() {
      * does, and costs nothing. */
     Serial.println(F("# Logging Current Meter UI  " FW_VERSION));
     Serial.println(F("# built " __DATE__ " " __TIME__));
-    Serial.println(F("# keys: r stats | d telemetry | t touch reinit | L load | f filter | e esc arm | p pwm | s stream | g log | m mount"));
+    Serial.println(F("# keys: r stats | d telemetry | t touch reinit | L load | f filter | e esc arm | p esc | s stream | g log | m mount"));
     Serial.printf("# touch: chip 0x%02X fw 0x%02X vendor 0x%02X %s\n",
                   touch.chipId(), touch.firmwareId(), touch.vendorId(),
                   touch.ok() ? "ok" : "INIT FAILED");
@@ -398,10 +404,10 @@ static void serialKeys() {
        * key armed at 1500 us, which a unidirectional ESC refuses to arm on. */
       escArm(!escArmed());
       Serial.printf("# [esc %s]\n", escArmed() ? "ARMED - idle 1000us, 2s hold" : "off");
-      escPrintPwm(Serial);
+      escPrint(Serial);
       break;
     case 'p': case 'P':
-      escPrintPwm(Serial);
+      escPrint(Serial);
       break;
     case 's': case 'S':
       streamSet(!streamOn());

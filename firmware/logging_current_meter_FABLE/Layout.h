@@ -97,12 +97,11 @@ inline const Target DEV_T[DEV_BTN_N] = {
 /* ----------------------------------------------------------- TEST MODE --
  * Two halves. The top is the manual set point — a five-part stepper with the
  * live pulse width in the middle, coarse outside, fine inside — plus the
- * frame period and a status readout. The bottom is the auto-cycle: low and
+ * (fixed, 50 Hz) frame and a status readout. The bottom is the auto-cycle: low and
  * high pulse on one row, the two dwells on the next, start/stop across the
  * foot where a hand reaching for it cannot brush anything else. */
 #define TEST_TITLE_CX 176      /* left of the ARM button, right of Back */
 inline const JCRRect TEST_PULSE_BOX  = {144,  58, 192, 44};
-inline const JCRRect TEST_PERIOD_BOX = { 62, 118, 116, 32};
 inline const JCRRect TEST_STATUS_BOX = {252, 118, 216, 32};
 inline const JCRRect TEST_CYC_BOX[4] = { { 62, 174, 116, 32}, {302, 174, 116, 32},
                                          { 62, 220, 116, 32}, {302, 220, 116, 32} };
@@ -110,14 +109,13 @@ inline const char *const TEST_CYC_LABEL[4] = { "CYCLE LOW US", "CYCLE HIGH US",
                                                "DWELL LOW MS", "DWELL HIGH MS" };
 /* Label rows: each 5x7 caption sits in the 8 px above its control row. */
 #define TEST_Y_MANUAL_LBL   46
-#define TEST_Y_PERIOD_LBL  106
+#define TEST_Y_FRAME_LBL   106     /* fixed-frame readout, not a control */
 #define TEST_Y_DIVIDER     158
 #define TEST_Y_CYC_LBL     164
 #define TEST_Y_DWELL_LBL   210
 
 enum { TEST_BACK, TEST_ARM,
        TEST_P_M50, TEST_P_M10, TEST_P_P10, TEST_P_P50,
-       TEST_PER_M, TEST_PER_P,
        TEST_LO_M,  TEST_LO_P,  TEST_HI_M,  TEST_HI_P,
        TEST_DLO_M, TEST_DLO_P, TEST_DHI_M, TEST_DHI_P,
        TEST_CYCLE, TEST_BTN_N };
@@ -128,8 +126,6 @@ inline const Target TEST_T[TEST_BTN_N] = {
   { { 76,  58,  56, 44}, { 72,  52,  68, 54} },   /* pulse -10               */
   { {344,  58,  56, 44}, {340,  52,  68, 54} },   /* pulse +10               */
   { {412,  58,  56, 44}, {408,  52,  72, 54} },   /* pulse +50               */
-  { { 12, 118,  44, 32}, {  0, 110,  58, 44} },   /* period -                */
-  { {184, 118,  44, 32}, {180, 110,  60, 44} },   /* period +                */
   { { 12, 174,  44, 32}, {  0, 168,  58, 44} },   /* cycle low  -            */
   { {184, 174,  44, 32}, {180, 168,  58, 44} },   /* cycle low  +            */
   { {252, 174,  44, 32}, {244, 168,  58, 44} },   /* cycle high -            */

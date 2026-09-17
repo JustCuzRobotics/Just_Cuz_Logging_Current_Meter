@@ -50,6 +50,28 @@ static void drawLogBox(uint8_t i, const char *text, uint16_t fg, char *cache) {
   tRussoCentered(f, r.cx(), r.y + (r.h - f.height) / 2, text, fg, COL_BOX_FILL);
 }
 
+/* ---- stepper ends ------------------------------------------------------
+ * Rate is stored as an index into LOG_RATE_DECIM, which runs FAST -> SLOW
+ * (index 0 = 76 Hz). The buttons are therefore inverted relative to the index
+ * so + means a higher rate. The array order is not changed because the index
+ * is what Settings persists. */
+static bool canStep(int8_t id) {
+  switch (id) {
+    case LOG_RATE_M: return gSet.logRateIdx + 1 < LOG_RATE_COUNT;   /* slower */
+    case LOG_RATE_P: return gSet.logRateIdx > 0;                    /* faster */
+    case LOG_THR_M:  return gSet.logThreshA > LOG_THRESH_MIN_A;
+    case LOG_THR_P:  return gSet.logThreshA < LOG_THRESH_MAX_A;
+    case LOG_DUR_M:  return gSet.logDurIdx > 0;          /* 0 = NO LIMIT */
+    case LOG_DUR_P:  return gSet.logDurIdx + 1 < LOG_DUR_COUNT;
+    default:         return true;
+  }
+}
+
+static void drawLogStep(int8_t id, bool pressed) {
+  bool en = canStep(id);
+  drawStepBtn(LOG_T[id].vis, pressed && en, ((id - LOG_MODE_M) & 1) != 0, en);
+}
+
 /* ---- chrome ----------------------------------------------------------- */
 
 static void drawUsbBtn(bool pressed) {
@@ -90,8 +112,9 @@ void paintLogOnce() {
   t5(252, LOG_Y_ROW1_LBL, LOG_BOX_LABEL[1], COL_TEXT_HI, COL_BG);
   t5(12,  LOG_Y_ROW2_LBL, LOG_BOX_LABEL[2], COL_TEXT_HI, COL_BG);
   t5(252, LOG_Y_ROW2_LBL, LOG_BOX_LABEL[3], COL_TEXT_HI, COL_BG);
-  for (uint8_t i = LOG_MODE_M; i <= LOG_DUR_P; i++)
-    drawStepBtn(LOG_T[i].vis, false, ((i - LOG_MODE_M) & 1) != 0);
+  drawArrowBtn(LOG_T[LOG_MODE_M].vis, false, false);
+  drawArrowBtn(LOG_T[LOG_MODE_P].vis, false, true);
+  for (int8_t i = LOG_RATE_M; i <= LOG_DUR_P; i++) drawLogStep(i, false);
 
   tft.drawFastHLine(12, LOG_Y_DIVIDER, 456, COL_BOX_BORDER);
   drawUsbBtn(false);
@@ -104,7 +127,9 @@ void paintLogOnce() {
 void updateLogTick(bool forceClear) {
   static char cBox[4][16], cState[20], cL2[40], cL3[40], cL4[40], cL5[40];
   static bool lastRec = false, lastUsb = false;
+  static bool lastEn[LOG_BTN_N];
   if (forceClear) {
+    for (uint8_t i = 0; i < LOG_BTN_N; i++) lastEn[i] = canStep((int8_t)i);
     for (uint8_t i = 0; i < 4; i++) cBox[i][0] = 0;
     cState[0] = cL2[0] = cL3[0] = cL4[0] = cL5[0] = 0;
     lastRec = logRecording(); lastUsb = streamOn();
@@ -171,6 +196,12 @@ void updateLogTick(bool forceClear) {
   field5(LOG_STATUS_X, LOG_Y_LINE2 + 42, LOG_STATUS_CHARS, 1,
          (st == LOGST_ERROR || st == LOGST_NO_CARD) ? COL_AMP : COL_TEXT_HI, COL_BG, buf, cL5);
 
+  /* Grey a stepper button in or out when its value reaches or leaves an end. */
+  for (int8_t i = LOG_RATE_M; i <= LOG_DUR_P; i++) {
+    bool en = canStep(i);
+    if (en != lastEn[i]) { lastEn[i] = en; drawLogStep(i, false); }
+  }
+
   if (logRecording() != lastRec) { lastRec = logRecording(); drawStartBtn(false); }
   if (streamOn() != lastUsb)     { lastUsb = streamOn();     drawUsbBtn(false); }
 }
@@ -184,9 +215,10 @@ void logSetPressed(int8_t id, bool pressed) {
     case LOG_SAVE:  drawSmallBtn(LOG_SAVE, pressed, "SAVE"); break;
     case LOG_MOUNT: drawSmallBtn(LOG_MOUNT, pressed, "REMOUNT SD"); break;
     case LOG_START: drawStartBtn(pressed); break;
+    case LOG_MODE_M: drawArrowBtn(LOG_T[id].vis, pressed, false); break;
+    case LOG_MODE_P: drawArrowBtn(LOG_T[id].vis, pressed, true);  break;
     default:
-      if (id >= LOG_MODE_M && id <= LOG_DUR_P)
-        drawStepBtn(LOG_T[id].vis, pressed, ((id - LOG_MODE_M) & 1) != 0);
+      if (id >= LOG_RATE_M && id <= LOG_DUR_P) drawLogStep(id, pressed);
       break;
   }
 }
@@ -207,10 +239,17 @@ void logDispatch(int8_t id) {
   }
 
   switch (id) {
-    case LOG_MODE_M: stepU8(gSet.logMode, -1, LOGMODE_COUNT); logModeChanged(); break;
-    case LOG_MODE_P: stepU8(gSet.logMode, +1, LOGMODE_COUNT); logModeChanged(); break;
-    case LOG_RATE_M: stepU8(gSet.logRateIdx, -1, LOG_RATE_COUNT); break;
-    case LOG_RATE_P: stepU8(gSet.logRateIdx, +1, LOG_RATE_COUNT); break;
+    /* Mode is a choice, not a quantity: arrows, and it wraps both ways. */
+    case LOG_MODE_M:
+      gSet.logMode = (uint8_t)((gSet.logMode + LOGMODE_COUNT - 1) % LOGMODE_COUNT);
+      logModeChanged();
+      break;
+    case LOG_MODE_P:
+      gSet.logMode = (uint8_t)((gSet.logMode + 1) % LOGMODE_COUNT);
+      logModeChanged();
+      break;
+    case LOG_RATE_M: stepU8(gSet.logRateIdx, +1, LOG_RATE_COUNT); break;   /* slower */
+    case LOG_RATE_P: stepU8(gSet.logRateIdx, -1, LOG_RATE_COUNT); break;   /* faster */
     case LOG_THR_M:
       if (gSet.logThreshA > LOG_THRESH_MIN_A) gSet.logThreshA--;
       break;

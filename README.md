@@ -61,6 +61,7 @@ BOM.md / BOM.csv                   bill of materials, generated from the schemat
 generator/                         the Python that builds and checks all of the above
 firmware/                          bring-up diagnostic and the touchscreen UI, one folder per sketch
 tools/capture_stream.py            records the meter's USB CSV stream on a PC
+tools/log_analyzer.py              GUI: graphs, summary CSV and run comparisons from SD logs
 libraries/JCR_TouchScreen/         reusable ST7796 + FT6336U display and touch library
 COMMIT_TIMELINE.md                 full detail behind every commit, newest first
 ```
@@ -149,7 +150,7 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
   zero are done and baked in.
 - **The touchscreen UI is built and running**, in `firmware/logging_current_meter_FABLE/`
   (v3.2): live V/I/T/W, energy accumulation, an autoscaled 5 s graph, **Test Mode** (ESC
-  signal on GP1 — manual set point plus timed auto-cycle, hardware PWM), **SD logging**
+  signal on GP1 — manual set point plus timed auto-cycle, Servo library at 50 Hz), **SD logging**
   (manual, Test-cycle or current-threshold start, 1–15 min duration) with a **USB CSV
   stream**, a Settings screen
   with flash persistence, dark and navy themes, a tunable weighted filter on the V and I

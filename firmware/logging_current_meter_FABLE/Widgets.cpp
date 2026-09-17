@@ -149,19 +149,41 @@ void updateToast() {
 }
 
 
-void drawStepBtn(const JCRRect &r, bool pressed, bool plus) {
-  uint16_t fill = pressed ? COL_BOX_PRESSED : COL_BOX_FILL;
+/* `enabled = false` greys the button out — used where a stepper is already at
+ * its end, so it is visible that this direction does nothing. */
+void drawStepBtn(const JCRRect &r, bool pressed, bool plus, bool enabled) {
+  uint16_t fill   = !enabled ? COL_DISABLED_FILL   : (pressed ? COL_BOX_PRESSED : COL_BOX_FILL);
+  uint16_t border = !enabled ? COL_DISABLED_BORDER : COL_BOX_BORDER;
+  uint16_t glyph  = !enabled ? COL_DISABLED_TEXT   : COL_TEXT_HI;
   tft.fillRoundRect(r.x, r.y, r.w, r.h, 5, fill);
-  tft.drawRoundRect(r.x, r.y, r.w, r.h, 5, COL_BOX_BORDER);
+  tft.drawRoundRect(r.x, r.y, r.w, r.h, 5, border);
   /* Bar length is 55% of the box's short side, thickness an eighth of that,
    * both forced odd-ish so the two bars share a centre pixel. */
   int16_t s  = (r.w < r.h ? r.w : r.h);
   int16_t len = (int16_t)(s * 55 / 100);
   int16_t th  = (int16_t)(len / 4); if (th < 3) th = 3;
   int16_t cx = r.cx(), cy = (int16_t)(r.y + r.h / 2);
-  tft.fillRect((int16_t)(cx - len / 2), (int16_t)(cy - th / 2), len, th, COL_TEXT_HI);
+  tft.fillRect((int16_t)(cx - len / 2), (int16_t)(cy - th / 2), len, th, glyph);
   if (plus)
-    tft.fillRect((int16_t)(cx - th / 2), (int16_t)(cy - len / 2), th, len, COL_TEXT_HI);
+    tft.fillRect((int16_t)(cx - th / 2), (int16_t)(cy - len / 2), th, len, glyph);
+}
+
+void drawArrowBtn(const JCRRect &r, bool pressed, bool right) {
+  uint16_t fill = pressed ? COL_BOX_PRESSED : COL_BOX_FILL;
+  tft.fillRoundRect(r.x, r.y, r.w, r.h, 5, fill);
+  tft.drawRoundRect(r.x, r.y, r.w, r.h, 5, COL_BOX_BORDER);
+  /* Isosceles triangle, height ~55% of the short side, drawn as vertical
+   * runs so it needs no triangle primitive: column k is (2k+1) px tall,
+   * narrowing toward the tip. */
+  int16_t s  = (r.w < r.h ? r.w : r.h);
+  int16_t hh = (int16_t)(s * 55 / 100 / 2);          /* half height        */
+  int16_t cx = r.cx(), cy = (int16_t)(r.y + r.h / 2);
+  int16_t x0 = (int16_t)(cx - hh / 2);               /* centre the width   */
+  for (int16_t k = 0; k <= hh; k++) {
+    int16_t half = (int16_t)(hh - k);
+    int16_t x = right ? (int16_t)(x0 + k) : (int16_t)(x0 + hh - k);
+    tft.drawFastVLine(x, (int16_t)(cy - half), (int16_t)(2 * half + 1), COL_TEXT_HI);
+  }
 }
 
 void t5Centered(const JCRRect &r, const char *s, uint16_t fg, uint16_t bg, uint8_t scale) {

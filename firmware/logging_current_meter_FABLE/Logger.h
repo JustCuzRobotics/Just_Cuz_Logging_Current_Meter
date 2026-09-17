@@ -11,7 +11,10 @@
  * access is inside its own SPI transaction (the TFT at 40 MHz, the card at
  * LOG_SD_MHZ), so they cannot interleave mid-transfer. SdFat is started with
  * USER_SPI_BEGIN so it does not re-run SPI.begin() under the display.
- *  - Files are LOG0001.CSV upward; no RTC, so the index is the ordering.
+ *  - Files are LOG_<n>_<MODE>_<V>V.CSV, e.g. LOG_07_CURRENT_22.4V.CSV: n counts
+ *    up from one past the highest on the card (no RTC, so n is the ordering),
+ *    MODE is the log mode setting, V the pack voltage at the start (for a
+ *    current trigger, the resting voltage just before the load came on).
  *  - NOT pre-allocated. SdFat's preAllocate() sets the file size to the whole
  *    reservation immediately, so a power pull would leave megabytes of junk
  *    after the data. Appending costs a FAT update per cluster — trivial at

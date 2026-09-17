@@ -53,7 +53,11 @@ bool drawBigValueField(const JCRRect &r, uint16_t valColor, const char *valText,
  * 5x7 '+' in a 44 px button is a speck, and scaling a bitmap glyph up gets
  * chunky fast; two rectangles stay crisp at any size and scale with the box,
  * so the same call works for a 24 px chip and a 44 px stepper. */
-void drawStepBtn(const JCRRect &r, bool pressed, bool plus);
+void drawStepBtn(const JCRRect &r, bool pressed, bool plus, bool enabled = true);
+
+/* Same chrome, with a filled left or right triangle — for steppers that cycle
+ * through named choices (and wrap), where +/- would imply a quantity. */
+void drawArrowBtn(const JCRRect &r, bool pressed, bool right);
 
 /* ---- stepper value box: the readout between a - and a + button ---- */
 void drawStepperBox(const JCRRect &r, const char *text, uint16_t fg, char *cache);

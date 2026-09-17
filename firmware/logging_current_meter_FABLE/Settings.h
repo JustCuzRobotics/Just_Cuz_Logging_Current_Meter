@@ -40,7 +40,6 @@ struct Settings {
   uint8_t  theme;          /* ThemeId                                      */
   uint8_t  filterIndex;    /* index into FILTER_SAMPLES                    */
   uint16_t escPulseUs;     /* manual set point                             */
-  uint16_t escPeriodUs;    /* frame period, 20000 = 50 Hz                  */
   uint16_t cycleLoUs, cycleHiUs;
   uint16_t cycleLoMs, cycleHiMs;   /* dwell at each end                    */
   /* ---- v2 ---- */
