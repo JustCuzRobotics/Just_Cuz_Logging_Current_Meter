@@ -95,47 +95,76 @@ inline const Target DEV_T[DEV_BTN_N] = {
 };
 
 /* ----------------------------------------------------------- TEST MODE --
- * Two halves. The top is the manual set point — a five-part stepper with the
- * live pulse width in the middle, coarse outside, fine inside — plus the
- * (fixed, 50 Hz) frame and a status readout. The bottom is the auto-cycle: low and
- * high pulse on one row, the two dwells on the next, start/stop across the
- * foot where a hand reaching for it cannot brush anything else. */
-#define TEST_TITLE_CX 176      /* left of the ARM button, right of Back */
-inline const JCRRect TEST_PULSE_BOX  = {144,  58, 192, 44};
-inline const JCRRect TEST_STATUS_BOX = {252, 118, 216, 32};
-inline const JCRRect TEST_CYC_BOX[4] = { { 62, 174, 116, 32}, {302, 174, 116, 32},
-                                         { 62, 220, 116, 32}, {302, 220, 116, 32} };
-inline const char *const TEST_CYC_LABEL[4] = { "CYCLE LOW US", "CYCLE HIGH US",
-                                               "DWELL LOW MS", "DWELL HIGH MS" };
-/* Label rows: each 5x7 caption sits in the 8 px above its control row. */
-#define TEST_Y_MANUAL_LBL   46
-#define TEST_Y_FRAME_LBL   106     /* fixed-frame readout, not a control */
-#define TEST_Y_DIVIDER     158
-#define TEST_Y_CYC_LBL     164
-#define TEST_Y_DWELL_LBL   210
-
-enum { TEST_BACK, TEST_ARM,
-       TEST_P_M50, TEST_P_M10, TEST_P_P10, TEST_P_P50,
-       TEST_LO_M,  TEST_LO_P,  TEST_HI_M,  TEST_HI_P,
-       TEST_DLO_M, TEST_DLO_P, TEST_DHI_M, TEST_DHI_P,
-       TEST_CYCLE, TEST_BTN_N };
-inline const Target TEST_T[TEST_BTN_N] = {
-  { {  8,   8,  52, 30}, {  0,   0,  90, 50} },   /* Back                    */
-  { {300,   8, 168, 30}, {292,   0, 188, 52} },   /* ARM / DISARM            */
-  { { 12,  58,  56, 44}, {  0,  52,  72, 54} },   /* pulse -50               */
-  { { 76,  58,  56, 44}, { 72,  52,  68, 54} },   /* pulse -10               */
-  { {344,  58,  56, 44}, {340,  52,  68, 54} },   /* pulse +10               */
-  { {412,  58,  56, 44}, {408,  52,  72, 54} },   /* pulse +50               */
-  { { 12, 174,  44, 32}, {  0, 168,  58, 44} },   /* cycle low  -            */
-  { {184, 174,  44, 32}, {180, 168,  58, 44} },   /* cycle low  +            */
-  { {252, 174,  44, 32}, {244, 168,  58, 44} },   /* cycle high -            */
-  { {424, 174,  44, 32}, {420, 168,  60, 44} },   /* cycle high +            */
-  { { 12, 220,  44, 32}, {  0, 214,  58, 44} },   /* dwell low  -            */
-  { {184, 220,  44, 32}, {180, 214,  58, 44} },   /* dwell low  +            */
-  { {252, 220,  44, 32}, {244, 214,  58, 44} },   /* dwell high -            */
-  { {424, 220,  44, 32}, {420, 214,  60, 44} },   /* dwell high +            */
-  { { 12, 264, 456, 36}, {  0, 258, 480,  62} },  /* START / STOP CYCLE      */
+ * Three tabs share one header: Back, MANUAL | CYCLE | LOG TEST, and ARM/STOP
+ * top right. Labels are 5x7 at scale 2 (12 px per char) so every width is
+ * checkable: "LOG TEST" is 96 px in a 104 px tab. Hit rects tile the header
+ * edge to edge (0..480 x 0..44) with no gaps and no overlap.
+ * A status line (5x7 x2, 38 chars max) sits under the header on all tabs. */
+enum { TH_BACK, TH_TAB_MANUAL, TH_TAB_CYCLE, TH_TAB_LOG, TH_ARM };
+/* An int, not an enumerator: the tab enums below continue numbering from it,
+ * and mixing two enum types in arithmetic is deprecated in C++20. */
+constexpr int TH_N = 5;
+inline const Target TH_T[TH_N] = {
+  { {  4,   6,  56, 32}, {  0,   0,  62, 44} },   /* Back                    */
+  { { 66,   6,  98, 32}, { 62,   0, 106, 44} },   /* MANUAL tab              */
+  { {170,   6,  88, 32}, {168,   0,  94, 44} },   /* CYCLE tab               */
+  { {264,   6, 104, 32}, {262,   0, 110, 44} },   /* LOG TEST tab            */
+  { {376,   6, 100, 32}, {372,   0, 108, 44} },   /* ARM / STOP              */
 };
+inline const char *const TH_TAB_LABEL[3] = { "MANUAL", "CYCLE", "LOG TEST" };
+#define TM_STATUS_X        8
+#define TM_STATUS_Y       50
+#define TM_STATUS_CHARS   38
+
+/* ---- MANUAL tab ---- (ids continue after the header's) */
+enum { TMM_ESC = TH_N, TMM_CTRL, TMM_RELEASE,
+       TMM_M50, TMM_M10, TMM_P10, TMM_P50,
+       TMM_SLIDER, TMM_IDLE, TMM_N };
+inline const Target TMM_T[TMM_N - TH_N] = {
+  { {  8,  72, 150, 36}, {  0,  68, 161, 44} },   /* ESC UNI / BIDI          */
+  { {164,  72, 150, 36}, {161,  68, 156, 44} },   /* STEPPERS / SLIDER       */
+  { {320,  72, 152, 36}, {317,  68, 163, 44} },   /* HOLD / DEAD-MAN         */
+  { {  8, 176, 110, 64}, {  0, 168, 121, 78} },   /* -50  (step mode)        */
+  { {124, 176, 110, 64}, {121, 168, 119, 78} },   /* -10                     */
+  { {246, 176, 110, 64}, {240, 168, 119, 78} },   /* +10                     */
+  { {362, 176, 110, 64}, {359, 168, 121, 78} },   /* +50                     */
+  { { 20, 176, 440, 64}, {  0, 168, 480, 78} },   /* slider  (slider mode)   */
+  { {  8, 256, 464, 42}, {  0, 248, 480, 72} },   /* IDLE                    */
+};
+/* Big readout: pulse in RUSSOBIG (24 px), then unit/percent in 5x7 x2. */
+#define TMM_READ_Y        120
+#define TMM_READ_X        110
+/* Slider interior: the thumb travels across this, 1000 us at the left edge,
+ * 2000 us at the right. */
+inline const JCRRect TMM_TRACK = { 22, 178, 436, 60 };
+#define TMM_THUMB_W        20
+
+/* ---- CYCLE and LOG TEST tabs ---- */
+enum { TMC_TILE0 = TH_N,                      /* 8 tiles                      */
+       TMC_BIG_M = TMC_TILE0 + 8, TMC_SMALL_M, TMC_SMALL_P, TMC_BIG_P,
+       TMC_RESET, TMC_START, TMC_N };
+enum { TILE_LOW, TILE_HIGH, TILE_RUP, TILE_DHI, TILE_RDN, TILE_DLO, TILE_DIR, TILE_CYC, TILE_N };
+inline const char *const TILE_LABEL[TILE_N] = { "LOW US", "HIGH US", "RAMP UP", "DWELL HI",
+                                                "RAMP DOWN", "DWELL LO", "DIRECTION", "CYCLES" };
+inline const Target TMC_T[TMC_N - TH_N] = {
+  { {  8,  70, 113, 44}, {  0,  66, 123, 50} },   /* tiles, row 1            */
+  { {125,  70, 113, 44}, {123,  66, 117, 50} },
+  { {242,  70, 113, 44}, {240,  66, 117, 50} },
+  { {359,  70, 113, 44}, {357,  66, 123, 50} },
+  { {  8, 118, 113, 44}, {  0, 116, 123, 49} },   /* tiles, row 2            */
+  { {125, 118, 113, 44}, {123, 116, 117, 49} },
+  { {242, 118, 113, 44}, {240, 116, 117, 49} },
+  { {359, 118, 113, 44}, {357, 116, 123, 49} },
+  { {  8, 170,  64, 40}, {  0, 165,  74, 48} },   /* -big                    */
+  { { 76, 170,  64, 40}, { 74, 165,  68, 48} },   /* -small                  */
+  { {340, 170,  64, 40}, {338, 165,  68, 48} },   /* +small                  */
+  { {408, 170,  64, 40}, {406, 165,  74, 48} },   /* +big                    */
+  { {  8, 256, 150, 42}, {  0, 248, 162, 72} },   /* RESET DEFAULTS          */
+  { {166, 256, 306, 42}, {162, 248, 318, 72} },   /* START / STOP            */
+};
+inline const JCRRect TMC_VALUE_BOX = { 144, 170, 192, 40 };
+#define TMC_STAT_Y1       218      /* two status lines, 5x7 x2 then x1        */
+#define TMC_STAT_Y2       238
 
 /* ------------------------------------------------------------ SETTINGS --
  * A label column on the left, controls in a fixed column on the right, one

@@ -22,7 +22,7 @@ static uint16_t sNextIndex = 1;
 static int16_t  sLastVRaw  = 0;       /* newest drained pack voltage, centivolts */
 static bool     sHaveVRaw  = false;
 
-enum StartCause : uint8_t { CAUSE_MANUAL, CAUSE_CYCLE, CAUSE_TRIGGER };
+enum StartCause : uint8_t { CAUSE_MANUAL, CAUSE_CYCLE, CAUSE_TRIGGER, CAUSE_TEST };
 
 static LogState sState = LOGST_NO_CARD;
 static bool     sRecording = false;
@@ -100,6 +100,15 @@ static int fmtCommon(char *p, size_t n, int32_t tMs, const LogRec &r) {
   if (r.tC != FIXED_INVALID) k += putCenti(p + k, n - k, r.tC);
   p[k] = 0;
   return k;
+}
+
+static const char *causeName(uint8_t c) {
+  switch (c) {
+    case CAUSE_TRIGGER: return "current trigger";
+    case CAUSE_CYCLE:   return "cycle";
+    case CAUSE_TEST:    return "log test";
+  }
+  return "manual";
 }
 
 static const char *modeName(uint8_t m) {
@@ -211,17 +220,31 @@ static void hcat(char *h, size_t cap, size_t &k, const char *fmt, ...) {
 }
 
 static void writeHeader() {
-  char h[768];
+  char h[1024];   /* ~760 B worst case with the Log Test profile line */
   size_t k = 0;
   hcat(h, sizeof h, k, "# JCR Logging Current Meter %s built %s %s\n",
                 FW_VERSION, __DATE__, __TIME__);
   uint8_t durMin = LOG_DUR_MIN[gSet.logDurIdx];
   char dur[16];
-  if (durMin) snprintf(dur, sizeof dur, "%u min", (unsigned)durMin); else snprintf(dur, sizeof dur, "until stopped");
+  if (sCause == CAUSE_TEST) snprintf(dur, sizeof dur, "test profile");
+  else if (durMin) snprintf(dur, sizeof dur, "%u min", (unsigned)durMin);
+  else snprintf(dur, sizeof dur, "until stopped");
   hcat(h, sizeof h, k, "# file %s  start=%s  mode=%s  threshold=%u A  duration=%s  rate=%s (every %u ticks of 13.158 ms)\n",
-                sFileName, sCause == CAUSE_TRIGGER ? "current trigger" : (sCause == CAUSE_CYCLE ? "cycle" : "manual"),
-                modeName(gSet.logMode), (unsigned)gSet.logThreshA, dur,
+                sFileName, causeName(sCause),
+                sCause == CAUSE_TEST ? "TEST" : modeName(gSet.logMode), (unsigned)gSet.logThreshA, dur,
                 LOG_RATE_LABEL[gSet.logRateIdx], (unsigned)sDecim);
+  if (sCause == CAUSE_TEST) {
+    /* Everything needed to reproduce the run. The analyzer parses this line. */
+    hcat(h, sizeof h, k, "# profile esc=%s low_us=%u high_us=%u ramp_up_ms=%u dwell_hi_ms=%u "
+                         "ramp_dn_ms=%u dwell_lo_ms=%u cycles=%u dir=%s pre_ms=%u post_ms=%u\n",
+         gSet.escType == ESC_TYPE_BIDI ? "BIDI" : "UNI",
+         (unsigned)(gSet.escType == ESC_TYPE_BIDI ? ESC_BIDI_IDLE_US : gSet.profLowUs),
+         (unsigned)gSet.profHighUs, (unsigned)gSet.profRampUpMs, (unsigned)gSet.profDwellHiMs,
+         (unsigned)gSet.profRampDnMs, (unsigned)gSet.profDwellLoMs, (unsigned)gSet.profCycles,
+         gSet.escType != ESC_TYPE_BIDI ? "FWD" :
+           (gSet.testDir == ESC_DIR_REV ? "REV" : gSet.testDir == ESC_DIR_ALT ? "FWD+REV" : "FWD"),
+         (unsigned)ESC_TEST_PRE_MS, (unsigned)ESC_TEST_POST_MS);
+  }
   hcat(h, sizeof h, k, "# filter=%u samples (i_filt,v_filt only)  esc_frame=%u us  cal: V %s, I zero %s, I gain %s\n",
                 (unsigned)FILTER_SAMPLES[gSet.filterIndex], (unsigned)ESC_FRAME_US,
                 V_CAL_VALID ? "fitted" : "NOMINAL", I_ZERO_VALID ? "measured" : "NOMINAL",
@@ -259,9 +282,8 @@ static void flushBlocks(uint8_t maxBlocks) {
 /* `allowMount`: only a manual start may mount here. An automatic start (the
  * trigger, a cycle) fires as a motor spins up, and a mount with no card
  * blocks core 0 — UI, escTick, the DISARM button — for ~2 s. */
-static bool openNewFile(bool allowMount, int16_t centivoltsAtStart) {
+static bool openNewFile(bool allowMount, int16_t centivoltsAtStart, const char *mode) {
   if (!sMounted && !(allowMount && logMount())) return false;
-  const char *mode = modeName(gSet.logMode);
   int32_t dv = centivoltsAtStart < 0 ? 0 : (centivoltsAtStart + 5) / 10;   /* 0.1 V */
   for (uint16_t tries = 0; tries < 50; tries++, sNextIndex++) {
     /* LOG_<n>_<MODE>_<V>V.CSV — n is at least two digits and simply grows
@@ -279,8 +301,10 @@ static bool openNewFile(bool allowMount, int16_t centivoltsAtStart) {
  * trigger record). */
 static bool beginLog(StartCause cause, int16_t centivoltsAtStart) {
   sCause = cause;
-  if (!openNewFile(cause == CAUSE_MANUAL, centivoltsAtStart)) {
-    if (cause != CAUSE_MANUAL) say("# [log] auto start skipped - no card mounted\n");
+  bool userStart = cause == CAUSE_MANUAL || cause == CAUSE_TEST;
+  if (!openNewFile(userStart, centivoltsAtStart,
+                   cause == CAUSE_TEST ? "TEST" : modeName(gSet.logMode))) {
+    if (!userStart) say("# [log] auto start skipped - no card mounted\n");
     updateState();
     return false;
   }
@@ -297,7 +321,7 @@ static bool beginLog(StartCause cause, int16_t centivoltsAtStart) {
   writeHeader();
   sWaitingTrig = false; sRearm = false;
   say("# [log] recording %s (%s)\n", sFileName,
-      cause == CAUSE_TRIGGER ? "current trigger" : (cause == CAUSE_CYCLE ? "cycle start" : "manual"));
+      causeName(cause));
   return true;
 }
 
@@ -371,6 +395,18 @@ void logStop(const char *reason) {
  * the displayed value if nothing has been drained yet (a start in the first
  * pass after boot). */
 static int16_t startVolts() { return sHaveVRaw ? sLastVRaw : gState.centivolts; }
+
+/* Log Test: a user action, so it may mount the card. Refused if any log is
+ * already recording — a test needs its own file. */
+bool logStartTest() {
+  if (sRecording || sStartReq) return false;
+  if (!beginLog(CAUSE_TEST, startVolts())) return false;
+  sStartReq = true;
+  updateState();
+  return true;
+}
+
+bool logTestActive() { return (sRecording || sStartReq) && sCause == CAUSE_TEST; }
 
 bool logStart() {
   if (sRecording || sStartReq) return true;
@@ -505,7 +541,9 @@ void logTick() {
       }
     } else if (sRecording) {
       int32_t rel = (int32_t)(r.tMs - sT0Ms);
-      if (sDurMs && rel > (int32_t)sDurMs) {
+      /* A Log Test runs to its own end (EscOut's post-roll), never to the
+       * LOG screen's duration limit. */
+      if (sDurMs && sCause != CAUSE_TEST && rel > (int32_t)sDurMs) {
         logStop("duration");
       } else if (!sDurMs && sCause == CAUSE_TRIGGER &&
                  (r.tMs - sLastAboveTMs) >= LOG_IDLE_STOP_MS) {

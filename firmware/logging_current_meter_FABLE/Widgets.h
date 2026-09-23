@@ -76,6 +76,26 @@ void t5Centered(const JCRRect &r, const char *s, uint16_t fg, uint16_t bg, uint8
 void escBarPaint();
 void escBarTick();
 
+/* ---- Test Mode widgets ----
+ * drawLabelBtn: rounded box with a 5x7 x2 label centred, `accent` colouring
+ *   border and text (pass COL_BOX_BORDER / COL_TEXT_HI for a plain button);
+ *   `enabled = false` draws the disabled palette.
+ * drawTile: a profile value tile — small caption top-left, value centred in
+ *   RUSSO16 (RUSSO13 if it would not fit). Selected tiles are filled and
+ *   outlined in the volt accent; disabled tiles use the disabled palette. */
+void drawLabelBtn(const JCRRect &r, bool pressed, const char *label, uint16_t accent,
+                  bool filled = false, bool enabled = true);
+void drawTile(const JCRRect &r, const char *label, const char *value,
+              bool selected, bool enabled);
+/* drawDeltaBtn: a -/+ value button labelled with its step ("-50", "+500").
+ *   `big` marks the coarse button of a small/big pair: lime border and text
+ *   plus a second ring, so it can't be mistaken for the fine one. */
+void drawDeltaBtn(const JCRRect &r, bool pressed, const char *label, bool big,
+                  bool enabled = true);
+/* drawEscTypeBtn: ESC type toggle — an arrow icon (one head = one direction,
+ *   two heads = bidirectional) and the words, in 5x7 x1. */
+void drawEscTypeBtn(const JCRRect &r, bool pressed, bool bidi, bool enabled);
+
 /* ---- log indicator: bottom strip, see Layout.h ---- */
 void logBarPaint();
 void logBarTick();

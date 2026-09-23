@@ -245,3 +245,74 @@ void logBarTick() {
   was = now;
   logBarPaint();
 }
+
+/* ------------------------------------------------------------------------
+ * Test Mode widgets.
+ * ---------------------------------------------------------------------- */
+void drawLabelBtn(const JCRRect &r, bool pressed, const char *label, uint16_t accent,
+                  bool filled, bool enabled) {
+  uint16_t fill, border, text;
+  if (!enabled) {
+    fill = COL_DISABLED_FILL; border = COL_DISABLED_BORDER; text = COL_DISABLED_TEXT;
+  } else {
+    fill   = (filled != pressed) ? COL_BOX_PRESSED : COL_BOX_FILL;
+    border = accent;
+    text   = accent == COL_BOX_BORDER ? COL_TEXT_HI : accent;
+  }
+  tft.fillRoundRect(r.x, r.y, r.w, r.h, 6, fill);
+  tft.drawRoundRect(r.x, r.y, r.w, r.h, 6, border);
+  if (filled && enabled) tft.drawRoundRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 5, border);
+  /* Scale 2 unless the label would overflow, then scale 1. */
+  uint8_t sc = (t5Width(label, 2) <= r.w - 8) ? 2 : 1;
+  t5Centered(r, label, text, fill, sc);
+}
+
+void drawTile(const JCRRect &r, const char *label, const char *value,
+              bool selected, bool enabled) {
+  uint16_t fill   = !enabled ? COL_DISABLED_FILL : (selected ? COL_BOX_PRESSED : COL_BOX_FILL);
+  uint16_t border = !enabled ? COL_DISABLED_BORDER : (selected ? COL_VOLT : COL_BOX_BORDER);
+  uint16_t lab    = !enabled ? COL_DISABLED_TEXT : COL_TEXT_HI;
+  uint16_t val    = !enabled ? COL_DISABLED_TEXT : (selected ? COL_VOLT : COL_TEXT);
+  tft.fillRoundRect(r.x, r.y, r.w, r.h, 5, fill);
+  tft.drawRoundRect(r.x, r.y, r.w, r.h, 5, border);
+  if (selected && enabled) tft.drawRoundRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 4, border);
+  t5(r.x + 6, r.y + 5, label, lab, fill);
+  gfxText.setFont(RUSSO16);
+  const JCRFont &f = (gfxText.textWidth(value) <= r.w - 10) ? RUSSO16 : RUSSO13;
+  tRussoCentered(f, r.cx(), r.y + 18 + (20 - f.height) / 2, value, val, fill);
+}
+
+void drawDeltaBtn(const JCRRect &r, bool pressed, const char *label, bool big,
+                  bool enabled) {
+  drawLabelBtn(r, pressed, label, big ? COL_BIG_STEP : COL_BOX_BORDER, false, enabled);
+  if (big && enabled)
+    tft.drawRoundRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 5, COL_BIG_STEP);
+}
+
+/* Horizontal arrow: a 3 px shaft from x0 to x1 with a solid head at the right
+ * end, and at the left end too when `both`. Heads are vertical runs like
+ * drawArrowBtn's, so no triangle primitive is needed. */
+static void drawHArrow(int16_t x0, int16_t x1, int16_t cy, bool both, uint16_t c) {
+  const int16_t HH = 7;                    /* head half-height = head length */
+  int16_t sx0 = both ? (int16_t)(x0 + HH) : x0;
+  tft.fillRect(sx0, (int16_t)(cy - 1), (int16_t)(x1 - HH - sx0 + 1), 3, c);
+  for (int16_t k = 0; k <= HH; k++) {
+    int16_t half = (int16_t)(HH - k);
+    tft.drawFastVLine((int16_t)(x1 - HH + k), (int16_t)(cy - half), (int16_t)(2 * half + 1), c);
+    if (both)
+      tft.drawFastVLine((int16_t)(x0 + HH - k), (int16_t)(cy - half), (int16_t)(2 * half + 1), c);
+  }
+}
+
+void drawEscTypeBtn(const JCRRect &r, bool pressed, bool bidi, bool enabled) {
+  drawLabelBtn(r, pressed, "", COL_BOX_BORDER, false, enabled);
+  uint16_t fill = !enabled ? COL_DISABLED_FILL : (pressed ? COL_BOX_PRESSED : COL_BOX_FILL);
+  uint16_t ink  = !enabled ? COL_DISABLED_TEXT : COL_TEXT_HI;
+  const char *txt = bidi ? "BIDIRECTIONAL" : "ONE DIRECTION";
+  int16_t tw = t5Width(txt, 1);
+  const int16_t AW = 34, GAP = 8;          /* icon width, icon-to-text gap  */
+  int16_t x = (int16_t)(r.x + (r.w - (AW + GAP + tw)) / 2);
+  int16_t cy = (int16_t)(r.y + r.h / 2);
+  drawHArrow(x, (int16_t)(x + AW - 1), cy, bidi, ink);
+  t5((int16_t)(x + AW + GAP), (int16_t)(cy - 3), txt, ink, fill, 1);
+}

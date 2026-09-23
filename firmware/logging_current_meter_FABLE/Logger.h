@@ -67,6 +67,8 @@ void logTick();              /* every loop(): drain ring, trigger, write      */
 
 bool logMount();             /* (re)mount + read-back test. Blocks up to ~2 s */
 bool logStart();             /* manual start (mounts if needed)               */
+bool logStartTest();         /* Log Test file LOG_n_TEST_V.CSV (mounts if needed) */
+bool logTestActive();        /* a Log Test's file is open                      */
 void logStop(const char *reason = "manual");
 bool logRecording();
 LogState logState();

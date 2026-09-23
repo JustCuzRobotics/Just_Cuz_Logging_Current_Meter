@@ -8,6 +8,115 @@ notes with light editing.
 
 <!-- Newest entries go directly below this line. -->
 
+## v3.3 — 2026-09-22
+
+### JCR_TouchScreen 1.2.0: lastGoodSampleMicros() for fail-safe held controls
+
+**Why:** v3.3's dead-man slider must drop the throttle if the finger stops being reported.
+Review of `JCR_FT6336::serviceNow()` showed that an I2C error, an impossible contact count or
+an out-of-range point all return before the release logic and before the live state is
+republished: `isDown()` then stays true with a frozen point, and no UP event is ever queued.
+
+**Changes:** `JCR_FT6336.h/.cpp` — `volatile uint32_t _pubAtMicros`, stamped after each
+successful publish (a single aligned store, atomic on the M0+), exposed as
+`lastGoodSampleMicros()`. README Diagnostics section documents it. `library.properties`
+1.1.0 → 1.2.0. No behaviour change for existing callers.
+
+**Verified:** compiles into firmware v3.3 with zero warnings. Not yet exercised on hardware.
+
+### firmware: v3.3 — Test Mode rework: manual / ramped cycle / logged cycle test
+
+**Why:** after bench use of v3.2a, Test Mode was clunky: arming only worked at 1000 µs (a
+bidirectional ESC needs 1500 µs neutral), manual control was repeated tapping, and the cycle
+stepped instantly to full throttle, which threw motors off the bench. Seth asked for separate
+Manual / Cycle / Logging Cycle Test screens, a slider option, linear ramps, a counted test that
+logs itself with a 3 s pre-roll and 5 s post-roll, press-and-hold on value buttons, and a
+reset-to-defaults. Decisions taken with him: a UNI/BIDI ESC type setting; BIDI direction
+FWD / REV / FWD+REV per test; HOLD / DEAD-MAN slider release; auto-disarm after a Log Test;
+three tabs sharing one saved profile; tile + shared editor row for editing.
+
+**Changes**
+
+- `EscProfile.h` — new. Pure profile maths with no Arduino dependency: phases, phase lengths,
+  `profilePulse()` (linear ramps with rounding, clamped at their ends, 0 ms = step), BIDI
+  mirroring about 1500 µs, per-cycle direction.
+- `EscOut.h/.cpp` — rewritten as a motion engine over the same Servo/PIO output. Phases OFF /
+  MANUAL / ARMING / PRE / RAMP_UP / DWELL_HI / RAMP_DN / DWELL_LO / POST. Idle follows the
+  ESC type. Profile snapshotted at run start. `escArm(false)` (header STOP) cuts the output in
+  every state; a Log Test then finishes an unpowered post-roll. The detach path first queues
+  idle, so the one pulse `Servo::detach()` can still let out is harmless. Phase starts advance
+  by nominal length through jitter but resync after a stall over 50 ms (catch-up would skip
+  a short dwell). `escTick()` returns `ESC_EV_TEST_DONE`.
+- `ScreenTestCommon.cpp`, `ScreenTestManual.cpp`, `ScreenTestCycle.cpp` — new; `ScreenTest.cpp`
+  removed. Header: Back, three tabs, ARM/STOP; status line. MANUAL: ESC type (locked while
+  armed; arrow icon + ONE DIRECTION / BIDIRECTIONAL), BUTTONS/SLIDER, HOLD/DEAD-MAN, big readout with % and FWD/REV, IDLE. CYCLE and LOG
+  TEST: 8 tiles, editor row with per-tile steps (µs 10/50, ms 50/500, cycles 1/10, direction
+  ◀ ▶), two-tap RESET DEFAULTS, START/STOP. LOG TEST shows the file and rows; CYCLE says
+  whether LOG MODE will log it.
+- `Layout.h` — TEST MODE section replaced (header, manual and cycle targets; `TH_N` is a
+  `constexpr int` so the tab enums avoid C++20 enum-enum arithmetic warnings).
+- `Widgets.*` — `drawLabelBtn` (5x7 x2 label, scale 1 fallback), `drawTile`, `drawDeltaBtn`
+  (the coarse button of a small/big pair gets lime border, text and a second ring),
+  `drawEscTypeBtn` (single- or double-headed arrow plus the words).
+- `Theme.*` — `bigStep` palette entry (`COL_BIG_STEP`, lime 0x87F0 in both themes).
+- `Screens.*` — three Test screen ids, dispatch/hit/tick routing, `screenRepeatable` /
+  `screenIsDrag` / `screenDrag` / `screenRelease`, and an overlap check covering the header
+  plus each manual mode's target set.
+- `logging_current_meter_FABLE.ino` — hold-to-repeat (1 s, then every 200 ms, no bursting after
+  a slow frame) for manual steppers, the cycle editor, and the LOG and Settings steppers.
+  Repeats only while the press is effective, so a refused press doesn't re-toast. Slider drag
+  from `getTouch()` every pass. A held drag is released on UP, on `!isDown()`, on a new DOWN
+  (lost UP), on a screen change, or after 60 ms without a good touch sample. The Log Test end
+  closes the log only if the test still owns it, after `logTick()` so the post-roll's last
+  samples are written. Serial `g` is refused during a test.
+- `Settings.h/.cpp` — blob v3 (26 bytes, `static_assert`ed): ESC type, control style, release
+  mode, direction, last tab, and the profile. v2 and v1 blobs migrate: old dwells are floored
+  at 500 ms and ramps default to 1000 ms. No live throttle is stored at all.
+  `settingsProfileDefaults`, `settingsFixProfileForType`.
+- `Logger.*` — `CAUSE_TEST`, `logStartTest()`, `logTestActive()`; files `LOG_<n>_TEST_<V>V.CSV`;
+  header `mode=TEST`, `duration=test profile` and a `# profile …` line; buffer 1 KB; DURATION
+  limit exempt. `ScreenLog.cpp` refuses START/STOP while a test runs.
+- `tools/log_analyzer.py` — parses `# profile`, adds it to the stats box, and draws an ESC-pulse
+  strip under the main chart whenever `esc_us` is non-zero.
+- `Version.h` → `v3.3 (FABLE)`.
+
+**Verified:**
+- Compiles clean on arduino-pico 6.1.0, zero warnings in project files: 143.6 KB flash,
+  48.8 KB RAM.
+- Host unit test of `EscOut` + `Settings` under ASan/UBSan:
+  - ramp values, rounding and clamping; BIDI mirroring
+  - arm hold at 1000 and 1500 µs
+  - continuous cycle with no step over 5 µs between 5 ms loop ticks
+  - a 3-cycle test with 3 s pre / 5 s post, done event and disarm
+  - abort into an idle post-roll; header STOP into an unpowered post-roll with re-arm refused
+  - FWD+REV alternation; 0 ms ramps
+  - a 700 ms stall not skipping a 500 ms dwell
+  - v2 → v3 migration and a v3 round-trip
+- Logger harness: a TEST file with its profile line, a second start refused, a test running
+  past a 1-minute DURATION setting, `reason=complete`.
+- The three layouts were rendered to PNG from `Layout.h` and checked for hit-rect overlaps
+  and coverage.
+- An independent review found 11 issues; all were fixed before this commit. They were:
+  - dead-man stuck on a hung touch controller or a lost UP
+  - the DEAD-MAN toggle leaving a held throttle
+  - the test end closing an unrelated log
+  - a finger held through the arming hold jumping the throttle
+  - a card mount blocking while armed
+  - lost quick taps on the slider
+  - stall catch-up skipping a phase
+  - the extra pulse on detach
+  - re-toasting on hold
+  - the wrong duration text in the test header
+  - overlap-check coverage
+
+**Not yet bench-verified.**
+
+**Open:**
+- Bench-check UNI and BIDI arming, slider drag and dead-man release, hold-repeat, and a
+  3-cycle LOG TEST (on a scope or with the motor clamped).
+- Whether the 50 Hz frame gives smooth enough ramps (about 50 steps per second).
+- A manual slew limit, if the slider proves too sharp.
+
 ## v3.2a — 2026-09-16
 
 ### tools: log_analyzer.py — graph SD logs, summarise and compare runs

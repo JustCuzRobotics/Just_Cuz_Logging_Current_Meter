@@ -30,6 +30,7 @@ const Palette PAL_DARK = {
   /* danger        */ 0xFB4B,
   /* toastBg       */ 0x0000,
   /* toastText     */ 0xFBEF,
+  /* bigStep       */ 0x87F0,   /* lime: unlike any channel accent */
 };
 
 /* Navy. The v3.0 "classic" ground was 0x0020, which in RGB565 is not a dark
@@ -55,6 +56,7 @@ const Palette PAL_CLASSIC = {
   /* danger        */ 0xFB4B,
   /* toastBg       */ 0x08A6,
   /* toastText     */ 0xFBEF,
+  /* bigStep       */ 0x87F0,   /* lime: unlike any channel accent */
 };
 
 static const Palette *const kPalettes[THEME_COUNT] = { &PAL_DARK, &PAL_CLASSIC };

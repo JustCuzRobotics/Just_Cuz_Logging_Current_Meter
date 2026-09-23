@@ -1,6 +1,7 @@
 /* ScreenHome.cpp — five tiles, vector glyphs, nothing per-tick. */
 #include "Screens.h"
 #include "Widgets.h"
+#include "Settings.h"
 #include <math.h>
 
 /* Small vector glyphs stand in for icons the bitmap font can't render. */
@@ -69,7 +70,7 @@ void homeDispatch(int8_t id) {
     case HOME_LIVE:  goTo(SCR_LIVE);  break;
     case HOME_GRAPH: goTo(SCR_GRAPH); break;
     case HOME_LOG:      goTo(SCR_LOG);      break;
-    case HOME_TEST:     goTo(SCR_TEST);     break;
+    case HOME_TEST:     goTo(testTabScreen(gSet.testTab)); break;
     case HOME_SETTINGS: goTo(SCR_SETTINGS); break;
   }
 }

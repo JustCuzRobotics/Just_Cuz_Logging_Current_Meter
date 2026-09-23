@@ -14,6 +14,7 @@
  * ========================================================================*/
 #pragma once
 #include <Arduino.h>
+#include "EscProfile.h"
 
 /* Filter window options, in samples. Index 0 is off. At the 13.158 ms tick
  * these are 26 ms through 263 ms; filterWindowMs() does that arithmetic for
@@ -36,20 +37,37 @@ extern const uint8_t  LOG_DUR_MIN[LOG_DUR_COUNT];         /* {0,1,2,3,5,10,15} *
 enum LogMode : uint8_t { LOGMODE_MANUAL = 0, LOGMODE_CYCLE = 1, LOGMODE_CURRENT = 2,
                          LOGMODE_COUNT = 3 };
 
+/* ---- Test Mode (v3) ---- */
+enum CtrlStyle   : uint8_t { CTRL_STEP = 0, CTRL_SLIDER = 1 };
+enum ReleaseMode : uint8_t { RELEASE_HOLD = 0, RELEASE_DEADMAN = 1 };
+
+/* Profile limits and editor steps (small / big). */
+#define PROF_RAMP_MAX_MS    3000
+#define PROF_DWELL_MIN_MS    500
+#define PROF_DWELL_MAX_MS  15000
+#define PROF_CYCLES_MAX      999
+#define PROF_UNI_HIGH_DEF   1500
+#define PROF_BIDI_HIGH_DEF  1750
+
 struct Settings {
+  /* 12 bytes of uint8, then uint16s — no hidden padding (checked below). */
   uint8_t  theme;          /* ThemeId                                      */
   uint8_t  filterIndex;    /* index into FILTER_SAMPLES                    */
-  uint16_t escPulseUs;     /* manual set point                             */
-  uint16_t cycleLoUs, cycleHiUs;
-  uint16_t cycleLoMs, cycleHiMs;   /* dwell at each end                    */
-  /* ---- v2 ---- */
   uint8_t  logMode;        /* LogMode                                      */
   uint8_t  logRateIdx;     /* index into LOG_RATE_DECIM                    */
   uint8_t  logDurIdx;      /* index into LOG_DUR_MIN; 0 = until stopped    */
   uint8_t  logThreshA;     /* CURRENT mode start threshold, whole amps     */
   uint8_t  streamOn;       /* USB CSV stream enabled at boot               */
-  uint8_t  _pad[3];
+  uint8_t  escType;        /* EscType: UNI / BIDI                          */
+  uint8_t  ctrlStyle;      /* CtrlStyle: manual steppers or slider         */
+  uint8_t  releaseMode;    /* ReleaseMode: slider hold or dead-man         */
+  uint8_t  testDir;        /* EscDir: FWD / REV / FWD+REV (BIDI only)      */
+  uint8_t  testTab;        /* last Test Mode tab (0 manual, 1 cycle, 2 log) */
+  uint16_t profLowUs, profHighUs;
+  uint16_t profRampUpMs, profDwellHiMs, profRampDnMs, profDwellLoMs;
+  uint16_t profCycles;     /* Log Test cycle count                         */
 };
+static_assert(sizeof(Settings) == 26, "Settings has hidden padding - checksum/migration assume none");
 
 extern Settings gSet;
 
@@ -57,3 +75,8 @@ void settingsBegin();     /* load from flash, or defaults. Core 0, in setup */
 bool settingsSave();      /* write to flash. Core 0 only. true on success   */
 bool settingsLoadedFromFlash();
 void settingsDefaults(Settings &s);
+
+/* Profile defaults for the current ESC type (RESET DEFAULTS on the Cycle tab),
+ * and a range check that snaps the high pulse into the type's valid band. */
+void settingsProfileDefaults(Settings &s);
+void settingsFixProfileForType(Settings &s);

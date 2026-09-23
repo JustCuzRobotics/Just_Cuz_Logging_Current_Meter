@@ -3,7 +3,7 @@
 | Sketch | Purpose |
 |---|---|
 | `display_bringup/` | Full board diagnostic and calibration tool. Exercises all 20 usable GPIO, reports pass/fail per subsystem with net names, and fits the analog calibration constants |
-| `logging_current_meter_FABLE/` | **The current UI (v3.2).** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, Test Mode (ESC signal + auto-cycle), **SD logging with manual / cycle / current-threshold start and a USB CSV stream**, Settings with flash persistence, two themes, tunable V/I filter, touch diagnostics with a serial telemetry harness. One module per concern; built on `libraries/JCR_TouchScreen/` |
+| `logging_current_meter_FABLE/` | **The current UI (v3.3).** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, Test Mode (manual / ramped cycle / logged cycle test, one-direction or bidirectional ESCs), **SD logging with manual / cycle / current-threshold start and a USB CSV stream**, Settings with flash persistence, two themes, tunable V/I filter, touch diagnostics with a serial telemetry harness. One module per concern; built on `libraries/JCR_TouchScreen/` |
 | `FABLE_DEV_TEST_SCREEN/` | Minimal touch-reliability test firmware. The quickest way to prove a panel and its touch mapping in isolation |
 | `logging_current_meter_ui/` | Superseded predecessor (v1.7, Arduino_GFX). Kept as a reference until the new UI is bench-verified |
 | `touch_dev_test/` | Earlier touch experiment. Superseded; not a reference |
@@ -173,9 +173,10 @@ routines (Settings → DUMP prints the current ones over serial). `Layout.h` hol
 pixel coordinate and touch target, so retargeting to another panel size is one file.
 `Sampler.*` is the core-1 ADC, the V/I weighted-moving-average filter and the graph ring;
 `Settings.*` the user settings and their EEPROM persistence (explicit Save only — a flash
-write halts both cores for a few ms); `EscOut.*` the ESC servo signal on GP1 (the core's
-Servo library — PIO, `writeMicroseconds()`, fixed 50 Hz — OFF at boot, always arms at idle
-with a 2 s hold); `Logger.*` the SD
+write halts both cores for a few ms); `EscOut.*` the ESC output and motion engine on GP1 (the
+core's Servo library — PIO, `writeMicroseconds()`, fixed 50 Hz — OFF at boot, always arms at
+idle with a 2 s hold; manual, ramped cycle and Log Test phases), `EscProfile.h` the pure
+profile maths (unit-tested on the host), `ScreenTest*.cpp` the three Test Mode tabs; `Logger.*` the SD
 log, its triggers and the USB stream; `Version.h` the version string the banner and log
 headers share; `Theme.*` the
 two palettes behind the `COL_*` macros; `Widgets.*` the button chrome and cached fields;
@@ -221,6 +222,51 @@ on a scope before trusting a test — expect a 20 ms frame and a 1000 µs pulse 
 Arming now always emits 1000 µs for 2 s before the set point or a cycle applies, and the
 set point resets to idle on arm. ESCs refuse to arm when their first frames carry
 throttle.
+
+### Test Mode (v3.3)
+
+Three tabs under one header: **MANUAL | CYCLE | LOG TEST**, with **ARM** / **STOP** at top
+right. STOP cuts the output from any tab, in any state (at most one more idle pulse, within
+a 20 ms frame). Leaving Test Mode does not stop a running cycle — the amber strip says the
+output is live.
+
+- **ESC type** (MANUAL tab, locked while armed; an arrow icon, one head or two):
+  **ONE DIRECTION** arms and idles at 1000 µs; **BIDIRECTIONAL** arms at 1500 µs neutral,
+  with reverse below. Every arm holds idle for 2 s first. (Logs and serial still write the
+  short tokens `esc=UNI` / `esc=BIDI`.)
+- **Small/big step pairs:** wherever a row has a fine and a coarse button (MANUAL ±10/±50,
+  the CYCLE editor), the coarse one is drawn in lime with a double ring.
+- **MANUAL:** BUTTONS (−50 −10 +10 +50) or SLIDER (tap anywhere to jump, drag to adjust;
+  BIDI centres on 1500 with a small detent). RELEASE: **HOLD** keeps the value when you lift;
+  **DEAD-MAN** drops to idle on lift — and also if the UP event is lost or touch samples stop
+  for 60 ms. Switching into slider + dead-man drops the set point to idle. IDLE returns to
+  idle/neutral while staying armed.
+- **CYCLE / LOG TEST** share one saved profile, edited by tapping a tile and using the
+  editor row (hold 1 s to repeat at 5/s):
+
+| Tile | Range | Steps |
+|---|---|---|
+| LOW US (UNI only; BIDI low = 1500) | 1000 – high−10 | 10 / 50 |
+| HIGH US (BIDI: forward pulse, reverse mirrors it about 1500) | UNI low+10 – 2000, BIDI 1510 – 2000 | 10 / 50 |
+| RAMP UP / RAMP DOWN ms | 0 – 3000 (0 = instant step) | 50 / 500 |
+| DWELL HI / DWELL LO ms | 500 – 15000 | 50 / 500 |
+| DIRECTION (BIDI only) | FWD / REV / FWD+REV (alternates each cycle) | ◀ ▶ |
+| CYCLES (LOG TEST only) | 1 – 999 | 1 / 10 |
+
+  Defaults (RESET DEFAULTS, tap twice within 2 s): UNI 1000→1500 µs (BIDI high 1750),
+  ramps 1000 ms, dwells 3000 ms, 10 cycles, FWD. The profile is locked while a run is
+  active and snapshotted at its start.
+- **CYCLE** runs RAMP UP → DWELL HI → RAMP DOWN → DWELL LO until STOP CYCLE (which leaves
+  the output armed at idle). LOG MODE = CYCLE still auto-logs these runs.
+- **LOG TEST** (start it disarmed — it arms itself): opens `LOG_<n>_TEST_<V>V.CSV`, 3 s
+  pre-roll at idle (the arming hold runs inside it), N cycles, 5 s post-roll, closes the log
+  (`reason=complete`) and disarms. ABORT TEST jumps to the post-roll at idle; header STOP
+  cuts the output and finishes the post-roll unpowered — either way the spin-down is logged
+  and the file ends `reason=aborted`. The header carries a `# profile …` line (ESC type,
+  pulses, ramps, dwells, cycles, direction) that the log analyzer shows in its stats box,
+  and the main chart gains an ESC-pulse strip. While a test runs, the LOG screen's
+  START/STOP and serial `g` are refused, the DURATION limit does not apply, and the CURRENT
+  trigger stays out of the way.
 
 ### Logging (v3.2)
 

@@ -9,7 +9,9 @@ void paintScreen(ScreenId s) {
     case SCR_HOME:  paintHomeOnce();  break;
     case SCR_LIVE:  paintLiveOnce();  break;
     case SCR_GRAPH: paintGraphOnce(); break;
-    case SCR_TEST:     paintTestOnce();     break;
+    case SCR_TEST_MANUAL: paintTestManualOnce(); break;
+    case SCR_TEST_CYCLE:
+    case SCR_TEST_LOG:    paintTestCycleOnce();  break;
     case SCR_SETTINGS: paintSettingsOnce(); break;
     case SCR_DEV:   paintDevOnce();   break;
     case SCR_LOG:   paintLogOnce();   break;
@@ -33,7 +35,9 @@ int8_t hitTestScreen(ScreenId s, int16_t x, int16_t y) {
     case SCR_HOME:  return hitTargets(HOME_T,  HOME_N,       x, y);
     case SCR_LIVE:  return hitTargets(LIVE_T,  LIVE_BTN_N,   x, y);
     case SCR_GRAPH: return hitTargets(GRAPH_T, GRAPH_BTN_N,  x, y);
-    case SCR_TEST:     return hitTargets(TEST_T, TEST_BTN_N, x, y);
+    case SCR_TEST_MANUAL: return testManualHit(x, y);
+    case SCR_TEST_CYCLE:
+    case SCR_TEST_LOG:    return testCycleHit(x, y);
     case SCR_SETTINGS: return hitTargets(SET_T,  SET_BTN_N,  x, y);
     case SCR_DEV:   return hitTargets(DEV_T,   DEV_BTN_N,    x, y);
     case SCR_LOG:   return hitTargets(LOG_T,   LOG_BTN_N,    x, y);
@@ -46,7 +50,9 @@ void dispatch(ScreenId s, int8_t id) {
     case SCR_HOME:  homeDispatch(id);  break;
     case SCR_LIVE:  liveDispatch(id);  break;
     case SCR_GRAPH: graphDispatch(id); break;
-    case SCR_TEST:     testDispatch(id);     break;
+    case SCR_TEST_MANUAL: testManualDispatch(id); break;
+    case SCR_TEST_CYCLE:
+    case SCR_TEST_LOG:    testCycleDispatch(id);  break;
     case SCR_SETTINGS: settingsDispatch(id); break;
     case SCR_DEV:   devDispatch(id);   break;
     case SCR_LOG:   logDispatch(id);   break;
@@ -58,7 +64,9 @@ void setPressedVisual(ScreenId s, int8_t id, bool pressed) {
     case SCR_HOME:  homeSetPressed(id, pressed);  break;
     case SCR_LIVE:  liveSetPressed(id, pressed);  break;
     case SCR_GRAPH: graphSetPressed(id, pressed); break;
-    case SCR_TEST:     testSetPressed(id, pressed);     break;
+    case SCR_TEST_MANUAL: testManualSetPressed(id, pressed); break;
+    case SCR_TEST_CYCLE:
+    case SCR_TEST_LOG:    testCycleSetPressed(id, pressed);  break;
     case SCR_SETTINGS: settingsSetPressed(id, pressed); break;
     case SCR_DEV:   devSetPressed(id, pressed);   break;
     case SCR_LOG:   logSetPressed(id, pressed);   break;
@@ -84,8 +92,12 @@ void tickScreen(ScreenId s) {
     case SCR_DEV:
       if (now - lastDev >= DEV_FRAME_MS) { lastDev = now; updateDevTick(); }
       break;
-    case SCR_TEST:
-      if (now - lastTest >= DEV_FRAME_MS) { lastTest = now; updateTestTick(); }
+    case SCR_TEST_MANUAL:
+      if (now - lastTest >= DEV_FRAME_MS) { lastTest = now; updateTestManualTick(); }
+      break;
+    case SCR_TEST_CYCLE:
+    case SCR_TEST_LOG:
+      if (now - lastTest >= DEV_FRAME_MS) { lastTest = now; updateTestCycleTick(); }
       break;
     case SCR_LOG:
       if (now - lastLog >= DEV_FRAME_MS) { lastLog = now; updateLogTick(); }
@@ -108,8 +120,52 @@ void checkTargetOverlaps() {
   warnOverlaps(HOME_T,  HOME_N,      "HOME");
   warnOverlaps(LIVE_T,  LIVE_BTN_N,  "LIVE");
   warnOverlaps(GRAPH_T, GRAPH_BTN_N, "GRAPH");
-  warnOverlaps(TEST_T,  TEST_BTN_N,  "TEST");
+  warnOverlaps(TH_T,    TH_N,        "TEST HEADER");
+  /* The manual tab's stepper row and slider share a band and are never both
+   * active, so check each mode's set on its own (plus the always-on rows). */
+  {
+    Target stepMode[TMM_N], sliderMode[TMM_N];
+    uint8_t ns = 0, nl = 0;
+    for (uint8_t i = 0; i < TH_N; i++) { stepMode[ns++] = TH_T[i]; sliderMode[nl++] = TH_T[i]; }
+    for (uint8_t i = TMM_ESC; i < TMM_N; i++) {
+      const Target &t = TMM_T[i - TH_N];
+      if (i != TMM_SLIDER && i != TMM_RELEASE) stepMode[ns++] = t;
+      if (i < TMM_M50 || i > TMM_P50) sliderMode[nl++] = t;
+    }
+    warnOverlaps(stepMode, ns, "TEST MANUAL (buttons)");
+    warnOverlaps(sliderMode, nl, "TEST MANUAL (slider)");
+  }
+  {
+    Target all[TMC_N];
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < TH_N; i++) all[n++] = TH_T[i];
+    for (uint8_t i = 0; i < TMC_N - TH_N; i++) all[n++] = TMC_T[i];
+    warnOverlaps(all, n, "TEST CYCLE");
+  }
   warnOverlaps(SET_T,   SET_BTN_N,   "SETTINGS");
   warnOverlaps(DEV_T,   DEV_BTN_N,   "DEV");
   warnOverlaps(LOG_T,   LOG_BTN_N,   "LOG");
+}
+
+/* ---- press-and-hold, drag ------------------------------------------------ */
+bool screenRepeatable(ScreenId s, int8_t id) {
+  switch (s) {
+    /* Repeat only when the press is doing something: a refused press would
+     * otherwise re-toast five times a second. */
+    case SCR_TEST_MANUAL: return testManualRepeatable(id);
+    case SCR_TEST_CYCLE:
+    case SCR_TEST_LOG:    return testCycleRepeatable(id);
+    case SCR_LOG:         return id >= LOG_RATE_M && id <= LOG_DUR_P;
+    case SCR_SETTINGS:    return id == SET_FILTER_M || id == SET_FILTER_P;
+    default:              return false;
+  }
+}
+bool screenIsDrag(ScreenId s, int8_t id) {
+  return s == SCR_TEST_MANUAL && testManualIsDrag(id);
+}
+void screenDrag(ScreenId s, int8_t id, int16_t x, int16_t y) {
+  if (s == SCR_TEST_MANUAL) testManualDrag(id, x, y);
+}
+void screenRelease(ScreenId s, int8_t id) {
+  if (s == SCR_TEST_MANUAL) testManualRelease(id);
 }

@@ -16,7 +16,8 @@
 #include <JCR_TouchScreen.h>
 #include "Layout.h"
 
-enum ScreenId { SCR_HOME, SCR_LIVE, SCR_GRAPH, SCR_TEST, SCR_SETTINGS, SCR_DEV, SCR_LOG };
+enum ScreenId { SCR_HOME, SCR_LIVE, SCR_GRAPH, SCR_SETTINGS, SCR_DEV, SCR_LOG,
+                SCR_TEST_MANUAL, SCR_TEST_CYCLE, SCR_TEST_LOG };
 extern ScreenId gScreen;
 
 void   paintScreen(ScreenId s);
@@ -46,10 +47,43 @@ void graphSetPressed(int8_t id, bool pressed);
 void graphDispatch(int8_t id);
 extern bool gGraphForceRedraw;              /* set after a V/T chip toggle */
 
-void paintTestOnce();
-void updateTestTick(bool forceClear = false);
-void testSetPressed(int8_t id, bool pressed);
-void testDispatch(int8_t id);
+/* ---- Test Mode: three tabs ----
+ * MANUAL, CYCLE and LOG TEST share the header in ScreenTestCommon.cpp. CYCLE
+ * and LOG TEST are one implementation (ScreenTestCycle.cpp) with a flag. */
+ScreenId testTabScreen(uint8_t tab);      /* 0 manual, 1 cycle, 2 log test */
+void paintTestHeader(ScreenId s);
+void testHeaderSetPressed(ScreenId s, int8_t id, bool pressed);
+bool testHeaderDispatch(ScreenId s, int8_t id);   /* true if it was a header id */
+void updateTestHeaderTick(bool forceClear);
+void testStatusLine(const char *text, uint16_t color, bool forceClear);
+int8_t testHeaderHit(int16_t x, int16_t y);
+
+void   paintTestManualOnce();
+void   updateTestManualTick(bool forceClear = false);
+int8_t testManualHit(int16_t x, int16_t y);
+void   testManualSetPressed(int8_t id, bool pressed);
+void   testManualDispatch(int8_t id);
+void   testManualDrag(int8_t id, int16_t x, int16_t y);
+void   testManualRelease(int8_t id);
+bool   testManualIsDrag(int8_t id);
+
+void   paintTestCycleOnce();              /* CYCLE or LOG TEST, from gScreen */
+void   updateTestCycleTick(bool forceClear = false);
+int8_t testCycleHit(int16_t x, int16_t y);
+void   testCycleSetPressed(int8_t id, bool pressed);
+void   testCycleDispatch(int8_t id);
+
+/* ---- press-and-hold, drag ----
+ * pumpTouchEvents() calls these for the target that is currently held:
+ * repeatable ids re-dispatch every 200 ms after 1 s; drag ids get the live
+ * finger position every loop and a release call when the finger lifts. */
+bool screenRepeatable(ScreenId s, int8_t id);
+bool testManualRepeatable(int8_t id);
+bool testCycleRepeatable(int8_t id);
+extern int16_t gDownX, gDownY;            /* last press position (.ino)    */
+bool screenIsDrag(ScreenId s, int8_t id);
+void screenDrag(ScreenId s, int8_t id, int16_t x, int16_t y);
+void screenRelease(ScreenId s, int8_t id);
 
 void paintSettingsOnce();
 void updateSettingsTick(bool forceClear = false);

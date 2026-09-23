@@ -1,5 +1,5 @@
 /* ==========================================================================
- * logging_current_meter_FABLE.ino — v3.2a (2026-09-16)
+ * logging_current_meter_FABLE.ino — v3.3 (2026-09-22)
  *
  * Touchscreen UI for the Just 'Cuz Robotics Logging Current Meter (Rev A).
  * RP2040-Zero + 3.5" 480x320 ST7796/FT6336U on one FPC.
@@ -13,7 +13,8 @@
  *   Sampler.*     core-1 ADC, calibration maths, graph history ring
  *   Widgets.*     button chrome, cached fields, toast
  *   Settings.*    user settings and their flash persistence
- *   EscOut.*      ESC servo-signal output (Servo lib/PIO, arm hold, auto-cycle)
+ *   EscOut.*      ESC output + motion engine (manual, ramped cycle, Log Test)
+ *   EscProfile.h  pure cycle-profile maths (host unit-tested)
  *   Logger.*      SD CSV logging, triggers, USB CSV stream
  *   Version.h     the version string shared by banner and log headers
  *   Screens.*     navigation and dispatch
@@ -43,6 +44,19 @@
  *
  * --------------------------------------------------------------------------
  * Version history
+ *   v3.3  2026-09-22  Test Mode rework. Three tabs — MANUAL, CYCLE, LOG TEST —
+ *                     under one header with a STOP that cuts the output from
+ *                     anywhere. ESC type UNI (arm/idle 1000 us) or BIDI
+ *                     (arm/neutral 1500 us, FWD/REV/FWD+REV cycles). Manual:
+ *                     steppers with hold-to-repeat, or a tap/drag slider
+ *                     with HOLD or DEAD-MAN release (dead-man also releases
+ *                     on a lost UP or 60 ms of stale touch data). Cycle: a
+ *                     saved profile with linear ramps (0-3000 ms) and dwells
+ *                     (500-15000 ms), edited via tiles + one editor row.
+ *                     Log Test: LOG_n_TEST_V.CSV, 3 s pre-roll, N cycles, 5 s
+ *                     post-roll, auto-disarm. Hold-to-repeat (1 s, then 5/s)
+ *                     on every stepper. Settings blob v3 (migrates v2/v1).
+ *                     JCR_TouchScreen 1.2.0 adds lastGoodSampleMicros().
  *   v3.2a 2026-09-16  Log files are named LOG_<n>_<MODE>_<V>V.CSV (n counts
  *                     up from the highest on the card; V is the pack voltage
  *                     at the start, or the resting voltage just before a
@@ -121,7 +135,7 @@
  *   t  re-initialise the touch controller (runs on core 1)
  *   L  toggle synthetic core-0 load (full-screen fill every loop)
  *   f  filter 0 <-> 20 samples
- *   e  ESC output arm (idle, 2 s hold) / disarm
+ *   e  ESC output arm (type-correct idle, 2 s hold) / disarm
  *   p  print the ESC output state (set point, pulse on the pin)
  *   s  USB CSV stream on/off (not saved - use the LOG screen's SAVE)
  *   g  SD log start/stop
@@ -187,8 +201,12 @@ static void telemetryTick();
 static void serialKeys();
 static int8_t   gPressedId     = -1;
 static ScreenId gPressedScreen = SCR_HOME;
-static int16_t  gDownX = 0, gDownY = 0;
+int16_t gDownX = 0, gDownY = 0;       /* last press, read by tap-to-jump */
 static uint32_t gDownMs = 0;
+static uint32_t gRepeatAtMs = 0;       /* next hold-to-repeat dispatch     */
+
+#define HOLD_REPEAT_DELAY_MS  1000     /* hold this long before repeating  */
+#define HOLD_REPEAT_EVERY_MS   200     /* then 5 dispatches per second     */
 
 /* ---- responsiveness harness ----
  * Latency is micros() at dispatch minus the event's core-1 timestamp: the
@@ -210,11 +228,18 @@ static void pumpTouchEvents() {
       uint32_t lat = micros() - ev.atMicros;
       sLatSum += lat; sLatN++;
       if (lat > gLatUsMax) gLatUsMax = lat;
+      /* A press while a drag target is still held means its UP was lost
+       * (queue overflow): release it first so a dead-man can't stick. */
+      if (gPressedId >= 0 && screenIsDrag(gPressedScreen, gPressedId)) {
+        screenRelease(gPressedScreen, gPressedId);
+        gPressedId = -1;
+      }
       gDownX = ev.x; gDownY = ev.y; gDownMs = millis();
       int8_t id = hitTestScreen(gScreen, ev.x, ev.y);
       if (id >= 0) {
         gPressedId = id;
         gPressedScreen = gScreen;
+        gRepeatAtMs = millis() + HOLD_REPEAT_DELAY_MS;
         setPressedVisual(gScreen, id, true);
         dispatch(gScreen, id);
       }
@@ -222,10 +247,48 @@ static void pumpTouchEvents() {
       int16_t dx = (int16_t)abs(ev.x - gDownX), dy = (int16_t)abs(ev.y - gDownY);
       if (millis() - gDownMs < 300 && dx < 12 && dy < 12) gDevTaps++;
       if (gPressedId >= 0) {
-        if (gScreen == gPressedScreen) setPressedVisual(gScreen, gPressedId, false);
+        if (gScreen == gPressedScreen) {
+          /* Release before the visual: a dead-man slider must drop to idle
+           * even if the repaint below were ever slow. */
+          if (screenIsDrag(gScreen, gPressedId)) screenRelease(gScreen, gPressedId);
+          setPressedVisual(gScreen, gPressedId, false);
+        }
         gPressedId = -1;
       }
     }
+  }
+}
+
+/* Held targets: drag targets get the live finger position every pass;
+ * repeatable buttons re-dispatch after HOLD_REPEAT_DELAY_MS. Both stop the
+ * moment the finger lifts (the UP event clears gPressedId) or the press has
+ * navigated to another screen. */
+#define DRAG_STALE_US  60000UL        /* 12 missed samples at 200 Hz      */
+
+static void serviceHeldTarget() {
+  if (gPressedId < 0) return;
+  if (screenIsDrag(gPressedScreen, gPressedId)) {
+    /* Fail safe: release a held drag the moment the finger is reported up,
+     * the press navigated away, or the touch data goes stale — an FT6336 that
+     * stops answering never sends the UP event a dead-man relies on. */
+    bool stale = (uint32_t)(micros() - touch.lastGoodSampleMicros()) > DRAG_STALE_US;
+    if (gScreen != gPressedScreen || !touch.isDown() || stale) {
+      screenRelease(gPressedScreen, gPressedId);
+      if (gScreen == gPressedScreen) setPressedVisual(gScreen, gPressedId, false);
+      gPressedId = -1;
+      return;
+    }
+    JCRTouchPoint p;
+    touch.getTouch(p);
+    if (p.down) screenDrag(gScreen, gPressedId, p.x, p.y);
+    return;
+  }
+  if (gScreen != gPressedScreen || !touch.isDown()) return;
+  if (screenRepeatable(gScreen, gPressedId) && (int32_t)(millis() - gRepeatAtMs) >= 0) {
+    gRepeatAtMs += HOLD_REPEAT_EVERY_MS;
+    if ((int32_t)(millis() - gRepeatAtMs) > HOLD_REPEAT_EVERY_MS)   /* slow frame: don't burst */
+      gRepeatAtMs = millis() + HOLD_REPEAT_EVERY_MS;
+    dispatch(gScreen, gPressedId);
   }
 }
 
@@ -313,9 +376,17 @@ void loop() {
   }
 
   pumpTouchEvents();      /* never skipped, however slow the frame */
-  escTick();              /* auto-cycle state machine — never blocks       */
+  serviceHeldTarget();    /* slider drag, hold-to-repeat                   */
+  uint8_t escEv = escTick();  /* motion engine: ramps, cycles, Log Test    */
   escBarTick();           /* the armed strip, on whichever screen is up    */
   logTick();              /* drain samples: trigger, SD, USB stream        */
+  if (escEv & ESC_EV_TEST_DONE) {
+    /* Log Test finished its post-roll (EscOut has already disarmed). Closed
+     * after logTick() so the post-roll's last samples are in the file. */
+    if (logTestActive()) logStop(escTestAborted() ? "aborted" : "complete");
+    if (gScreen == SCR_TEST_LOG || gScreen == SCR_TEST_CYCLE || gScreen == SCR_TEST_MANUAL)
+      showToast(escTestAborted() ? "Log Test aborted - log saved" : "Log Test complete - log saved");
+  }
   logBarTick();           /* the recording strip along the bottom edge     */
   tickScreen(gScreen);
   updateToast();
@@ -403,7 +474,7 @@ static void serialKeys() {
       /* Arms at idle with the 2 s hold, exactly like the ARM button. The old
        * key armed at 1500 us, which a unidirectional ESC refuses to arm on. */
       escArm(!escArmed());
-      Serial.printf("# [esc %s]\n", escArmed() ? "ARMED - idle 1000us, 2s hold" : "off");
+      Serial.printf("# [esc %s]\n", escArmed() ? "ARMED at idle, 2s hold" : "off");
       escPrint(Serial);
       break;
     case 'p': case 'P':
@@ -414,7 +485,8 @@ static void serialKeys() {
       if (!streamOn()) Serial.println(F("# [stream off]"));
       break;
     case 'g': case 'G':
-      if (logRecording()) logStop("serial");
+      if (escTesting()) Serial.println(F("# [log] a Log Test owns the log - STOP the test instead"));
+      else if (logRecording()) logStop("serial");
       else if (!logStart()) Serial.println(F("# [log] start failed - see card status"));
       break;
     case 'm': case 'M':

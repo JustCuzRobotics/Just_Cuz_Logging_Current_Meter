@@ -26,6 +26,7 @@ struct Palette {
   uint16_t boxFill, boxBorder, boxPressed;
   uint16_t disabledFill, disabledBorder, disabledText;
   uint16_t danger, toastBg, toastText;
+  uint16_t bigStep;                      /* the coarse button of a small/big pair */
 };
 
 extern const Palette PAL_DARK;      /* minimal ink: no filled panels        */
@@ -52,6 +53,7 @@ uint8_t themeCurrent();
 #define COL_DANGER          (gPal->danger)
 #define COL_TOAST_BG        (gPal->toastBg)
 #define COL_TOAST_TEXT      (gPal->toastText)
+#define COL_BIG_STEP        (gPal->bigStep)
 
 /* Russo One, rasterized by the library's extras/make_fonts.py. Russo One is
  * SIL Open Font Licensed; these headers are generated from it locally rather

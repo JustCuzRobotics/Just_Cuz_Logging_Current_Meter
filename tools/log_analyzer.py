@@ -130,6 +130,9 @@ class MeterLog:
             elif h.startswith("end "):
                 for k, v in re.findall(r"(\w+)=(\S+)", h):
                     self.end[k] = v
+            elif h.startswith("profile "):
+                # Log Test profile (firmware v3.3+): esc=UNI low_us=1000 ...
+                self.meta["profile"] = dict(re.findall(r"(\w+)=(\S+)", h))
             elif h.startswith("stream:"):
                 self.meta["source"] = "usb stream"
 
@@ -242,7 +245,8 @@ class MeterLog:
     def stats_text(self):
         m = self.metrics
         mode = m["mode"]
-        if m["start_cause"] not in ("-", "") and m["start_cause"].lower() != mode.lower():
+        if (m["start_cause"] not in ("-", "") and m["start_cause"].lower() != mode.lower()
+                and mode != "TEST"):
             mode = f"{mode} ({m['start_cause']})"
         lines = [
             f"Log mode: {mode}",
@@ -255,6 +259,12 @@ class MeterLog:
         ]
         if np.isfinite(m["peak_temp_c"]):
             lines.append(f"Peak temp: {m['peak_temp_c']:.1f} °C")
+        prof = self.meta.get("profile")
+        if prof:
+            lines.append(f"Test: {prof.get('cycles', '?')} cycles, { {'UNI': 'one-direction', 'BIDI': 'bidirectional'}.get(prof.get('esc'), prof.get('esc', '?'))} {prof.get('dir', '')}"
+                         f" {prof.get('low_us', '?')}→{prof.get('high_us', '?')} us")
+            lines.append(f"Ramp {prof.get('ramp_up_ms', '?')}/{prof.get('ramp_dn_ms', '?')} ms,"
+                         f" dwell {prof.get('dwell_hi_ms', '?')}/{prof.get('dwell_lo_ms', '?')} ms")
         if m["i_gain_nominal"]:
             lines.append("Note: current gain not calibrated")
         if m["end_reason"].startswith("INCOMPLETE"):
@@ -274,7 +284,16 @@ class MeterLog:
         df = self.df
         t = df["t_s"]
 
-        fig, ax_i = plt.subplots(figsize=(14, 8))
+        # ESC pulse strip under the main chart whenever the meter was driving
+        # the ESC (Test Mode / Log Test), so ramps and dwells line up with the
+        # current they caused.
+        has_esc = "esc_us" in df and (df["esc_us"] > 0).any()
+        if has_esc:
+            fig, (ax_i, ax_esc) = plt.subplots(2, 1, figsize=(14, 9.5), sharex=True,
+                                               gridspec_kw={"height_ratios": [5, 1], "hspace": 0.06})
+        else:
+            fig, ax_i = plt.subplots(figsize=(14, 8))
+            ax_esc = None
         fig.patch.set_facecolor("white")
         ax_v = ax_i.twinx()
         ax_t = ax_i.twinx()
@@ -315,7 +334,19 @@ class MeterLog:
         else:
             ax_t.set_visible(False)
 
-        ax_i.set_xlabel("Time (s)", fontsize=12, fontweight="bold")
+        if ax_esc is not None:
+            esc = df["esc_us"].where(df["esc_us"] > 0)        # 0 = output off -> gap
+            ax_esc.plot(t, esc, color="0.25", linewidth=1.4, drawstyle="steps-post")
+            ax_esc.set_ylabel("ESC (us)", fontsize=10, fontweight="bold")
+            lo, hi = float(esc.min()), float(esc.max())
+            pad = max((hi - lo) * 0.15, 20)
+            ax_esc.set_ylim(lo - pad, hi + pad)
+            style_axes(ax_esc)
+            self._shade_pretrigger(ax_esc)
+            ax_esc.set_xlabel("Time (s)", fontsize=12, fontweight="bold")
+            ax_i.set_xlabel("")
+        else:
+            ax_i.set_xlabel("Time (s)", fontsize=12, fontweight="bold")
         ax_i.set_ylabel("Current (A)", fontsize=12, fontweight="bold")
         ax_v.set_ylabel("Voltage (V)", fontsize=12, fontweight="bold")
         ax_t.set_ylabel("Temperature (°C)", fontsize=12, fontweight="bold")

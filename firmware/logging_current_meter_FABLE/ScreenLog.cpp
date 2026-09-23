@@ -17,6 +17,7 @@
 #include "Widgets.h"
 #include "Settings.h"
 #include "Logger.h"
+#include "EscOut.h"
 #include "Format.h"
 
 /* ---- values ----------------------------------------------------------- */
@@ -276,6 +277,7 @@ void logDispatch(int8_t id) {
       return;
 
     case LOG_START:
+      if (escTesting()) { showToast("Log Test owns the log - stop it on TEST"); return; }
       if (logRecording()) logStop("manual");
       else if (!logStart()) showToast("Could not start - see card status");
       break;
