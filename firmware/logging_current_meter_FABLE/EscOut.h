@@ -8,7 +8,8 @@
  * because a bare attach(pin) starts at 1500 us.
  *
  * ESC TYPE (gSet.escType). UNI: idle/arm 1000 us, throttle 1000-2000. BIDI:
- * neutral/arm 1500 us, reverse below. Everything that "returns to idle" goes
+ * neutral/arm 1500 us, reverse below (if the ESC itself is in its
+ * bidirectional/3D mode). Everything that "returns to idle" goes
  * to escIdleUs(), so the same code serves both.
  *
  * STATES (EscPhase, see EscProfile.h)
@@ -104,7 +105,7 @@ EscPhase escPhase();
 uint32_t escPhaseRemainMs();         /* ms left in a timed phase            */
 uint16_t escCycleNum();              /* 1-based cycle in progress (0 = none) */
 uint16_t escCycleTarget();           /* Log Test cycle count                */
-bool     escCycleReverse();          /* BIDI: current cycle is reverse      */
+bool     escOutIsReverse();          /* BIDI: the pulse is below neutral    */
 const EscProfile &escRunProfile();   /* the snapshot a run is using         */
 const char *escPhaseName(EscPhase p);
 

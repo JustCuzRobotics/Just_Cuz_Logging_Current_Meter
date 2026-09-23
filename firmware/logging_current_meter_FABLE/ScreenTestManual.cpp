@@ -228,9 +228,15 @@ void testManualDispatch(int8_t id) {
     case TMM_ESC:
       if (escArmed() || escTesting()) { showToast("Disarm to change ESC type"); return; }
       gSet.escType = bidi() ? ESC_TYPE_UNI : ESC_TYPE_BIDI;
+      /* The cycle profile's low end means different things under the two
+       * types — 1000 us is a stop on one and full reverse on the other — so
+       * it is reset to the new type's stop pulse and the cycle goes back to
+       * STOP -> SPIN. Saying so beats a motor doing something unexpected on
+       * the next START. */
       settingsFixProfileForType(gSet);
       escManualIdle();
       paintScreen(SCR_TEST_MANUAL);
+      showToast("ESC type changed - cycle low end reset");
       return;
     case TMM_CTRL:
       gSet.ctrlStyle = sliderMode() ? CTRL_STEP : CTRL_SLIDER;

@@ -1,5 +1,5 @@
 /* ==========================================================================
- * logging_current_meter_FABLE.ino — v3.5 (2026-09-23)
+ * logging_current_meter_FABLE.ino — v3.6 (2026-09-23)
  *
  * Touchscreen UI for the Just 'Cuz Robotics Logging Current Meter (Rev A).
  * RP2040-Zero + 3.5" 480x320 ST7796/FT6336U on one FPC.
@@ -45,6 +45,20 @@
  *
  * --------------------------------------------------------------------------
  * Version history
+ *   v3.6  2026-09-23  Cycle profiles are plain pulse values. The DIRECTION
+ *                     tile (FWD / REV / FWD+REV, which mirrored the high
+ *                     pulse about neutral) is replaced by CYCLE MODE:
+ *                     STOP -> SPIN locks the low end to the ESC type's stop
+ *                     pulse and frees SPIN US across 1000-2000, so a
+ *                     bidirectional ESC runs backwards by setting it below
+ *                     1500 — what is on the screen is what is on the pin;
+ *                     SPIN -> SPIN frees both ends, in either order, for
+ *                     cycling between two running points, easing from the
+ *                     pre-roll's idle into the low end over the ramp-up time.
+ *                     Settings blob v7 folds an old REV profile's direction
+ *                     into its stored pulse so the motor keeps turning the
+ *                     way it did; changing ESC type resets the cycle's low
+ *                     end to the new type's stop pulse.
  *   v3.5  2026-09-23  ESC handling on the bench. Every run — cycle or Log
  *                     Test — starts with a pre-roll at idle, settable in
  *                     Settings (ESC PRE-ROLL, 0-15 s, default 5 s), because an

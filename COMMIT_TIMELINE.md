@@ -8,6 +8,62 @@ notes with light editing.
 
 <!-- Newest entries go directly below this line. -->
 
+## v3.6 — 2026-09-23
+
+### firmware: v3.6 — cycle mode replaces direction; profiles are plain pulses
+
+**Why:** on the bench, DIRECTION did not do what it looked like it did. HIGH US was defined as
+the *forward* pulse and REV mirrored it about neutral, so HIGH could not be set below 1500 and
+a reverse run was an inference rather than a number. Seth's point: LOW is almost always the
+stop pulse, and what varies is whether a cycle runs stop→spin or between two running points —
+so the setting should be that, and the pulse should be literal.
+
+**Changes**
+
+- `EscProfile.h` — `EscDir` / `profileCycleReverse()` and the mirroring in `profileHighUs()`
+  are gone; `profilePulse()` loses its `reverse` argument. New `CycleMode`
+  (`CYC_STOP_SPIN` / `CYC_SPIN_SPIN`), carried in the profile so a run snapshots it with
+  everything else. `profileLowUs()` returns the ESC type's idle in STOP→SPIN and the
+  configured low in SPIN→SPIN. Nothing in the engine interprets a pulse as forward or reverse
+  any more — that is the ESC's business, and only if it is in its own 3D mode.
+- `Settings.h/.cpp` — `testDir` becomes `cycleMode` (same byte, so the struct stays 40 B);
+  blob **v7**, with v6 read through the live layout and that byte reset to STOP→SPIN, which is
+  what every old profile actually did. `settingsFixProfileForType()` no longer snaps the high
+  pulse into a type-dependent band: both ends are 1000–2000 now.
+- `ScreenTestCycle.cpp` / `Layout.h` — the DIRECTION tile becomes CYCLE MODE; LOW is greyed and
+  shows the stop pulse in STOP→SPIN; HIGH is captioned SPIN US there. Both pulse tiles take the
+  full 1000–2000 in either order, so a profile may ramp downward.
+- `EscOut.*` — `escCycleReverse()` (was "this cycle is a mirrored one") becomes
+  `escOutIsReverse()`, display only: a bidirectional ESC with a pulse below neutral.
+- `Logger.cpp` — the `# profile` line carries `mode=stop-spin|spin-spin` in place of `dir=`,
+  and `low_us` is the value actually used. `tools/log_analyzer.py` reads either, so older logs
+  still show their direction.
+- **A lead-in ramp** (`PH_ENTRY`): in SPIN→SPIN the pre-roll's idle and the cycle's low end are
+  different pulses, so the run eases from one to the other over the ramp-up time instead of
+  stepping. Without it a `low=1900` profile jumped 900 µs in one 20 ms frame, exactly the jerk
+  the pre-roll exists to prevent. STOP→SPIN skips the phase (its low end IS idle), so its
+  timing is unchanged.
+- **Migration folds the old direction into the pulse.** A v3.5 REV profile stored the forward
+  magnitude and emitted its mirror, so carrying `profHighUs` across verbatim would have run the
+  motor the other way on the next START. `migrateDirection()` mirrors it back for REV;
+  FWD+REV cannot be expressed by one profile and migrates to its forward half.
+- Changing ESC TYPE now **reconciles** the profile rather than range-checking it: the low end
+  goes back to the new type's stop pulse and the cycle to STOP→SPIN, with a toast saying so —
+  1000 µs is a stop on a one-direction ESC and full reverse on a bidirectional one.
+
+**Verification:** compile clean, zero warnings (154.4 KB). Engine tests rewritten for the new
+maths: STOP→SPIN low = the type's idle on both ESC types, a sub-neutral spin pulse emitted as
+set (and flagged reverse only on a bidirectional ESC), SPIN→SPIN with low above high ramping
+downward through neutral, and a two-cycle bidirectional run that returns to neutral between
+cycles. Clock harness covers the v6→v7 migration. Layout preview re-rendered.
+
+Review found six issues, all fixed — the worst were the migration silently reversing every REV
+profile and the unramped step into a SPIN→SPIN low end; the others were a stale ESC-type
+snapshot behind the REV marker, the LOW/HIGH tiles not repainting when the mode changed, a
+type change no longer reconciling the profile, and a dead `TILE_LABEL` array.
+
+**Open:** not bench-tested.
+
 ## v3.5 — 2026-09-23
 
 ### firmware: v3.5 — ESC pre-roll, and stopping without disarming

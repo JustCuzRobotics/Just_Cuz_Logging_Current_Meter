@@ -3,8 +3,8 @@
  *
  * Both tabs edit ONE saved profile (gSet.prof*):
  *
- *   [LOW US ][HIGH US][RAMP UP][DWELL HI]     tap a tile to select it
- *   [RAMP DN][DWELL LO][DIRECTION][CYCLES]
+ *   [LOW/STOP][SPIN US][RAMP UP][DWELL HI]    tap a tile to select it
+ *   [RAMP DN ][DWELL LO][CYC MODE][CYCLES]
  *   [-BIG][-SMALL]   value   [+SMALL][+BIG]   hold 1 s to repeat, 5 per s
  *   status
  *   [RESET DEFAULTS]        [START ... / STOP ...]
@@ -21,8 +21,19 @@
  * and the log header records it, so an edit mid-run would change neither —
  * refusing it avoids the screen claiming a value the motor is not seeing.
  *
- * Tiles that do not apply are greyed and unselectable: LOW in BIDI (the low
- * end is neutral), DIRECTION in UNI, CYCLES on the CYCLE tab (continuous).
+ * CYCLE MODE decides what the bottom of a cycle is:
+ *   STOP -> SPIN  the low end is the ESC type's idle (1000 or 1500), locked,
+ *                 and the LOW tile is greyed. SPIN US is a free 1000-2000
+ *                 pulse, so a bidirectional ESC runs backwards simply by
+ *                 setting it below 1500 — the number on the screen is the
+ *                 number on the pin, with no mirroring and no direction
+ *                 setting. (The ESC has to be in its own 3D mode for a pulse
+ *                 under neutral to mean reverse.)
+ *   SPIN -> SPIN  both ends are free 1000-2000, for cycling between two
+ *                 running points rather than through a stop.
+ *
+ * Tiles that do not apply are greyed and unselectable: LOW in STOP -> SPIN,
+ * CYCLES on the CYCLE tab (continuous).
  * ========================================================================*/
 #include "Screens.h"
 #include "Widgets.h"
@@ -37,9 +48,10 @@ static bool logTab()  { return gScreen == SCR_TEST_LOG; }
 static bool bidi()    { return gSet.escType == ESC_TYPE_BIDI; }
 static bool running() { return escCycling() || escTesting(); }
 
+static bool stopSpin() { return gSet.cycleMode == CYC_STOP_SPIN; }
+
 static bool tileEnabled(uint8_t t) {
-  if (t == TILE_LOW) return !bidi();
-  if (t == TILE_DIR) return bidi();
+  if (t == TILE_LOW) return !stopSpin();   /* locked to the type's idle    */
   if (t == TILE_CYC) return logTab();
   return true;
 }
@@ -73,7 +85,7 @@ static void tilePut(uint8_t t, uint32_t v) {
 }
 
 /* Editor steps per tile: {small, big}. DIRECTION steps through its three
- * choices with the small buttons; its big buttons are disabled.
+ * settings with the small buttons; its big buttons are disabled.
  *
  * Millisecond tiles change gear: below 5 s the fine pair (50 / 500 ms) is what
  * you want for a ramp, and above it the coarse pair (1 s / 10 s), because a
@@ -84,7 +96,7 @@ static void tileSteps(uint8_t t, uint32_t &small, uint32_t &big) {
   switch (t) {
     case TILE_LOW: case TILE_HIGH: small = 10; big = 50;  break;
     case TILE_CYC:                 small = 1;  big = 10;  break;
-    case TILE_DIR:                 small = 1;  big = 0;   break;
+    case TILE_MODE:                small = 1;  big = 0;   break;
     default:
       if (tileGet(t) > PROF_MS_COARSE_ABOVE) { small = 1000; big = 10000; }
       else                                   { small = 50;   big = 500;   }
@@ -92,36 +104,36 @@ static void tileSteps(uint8_t t, uint32_t &small, uint32_t &big) {
   }
 }
 
-static const char *dirName(uint8_t d) {
-  return d == ESC_DIR_REV ? "REV" : d == ESC_DIR_ALT ? "FWD+REV" : "FWD";
-}
+static const char *modeName() { return stopSpin() ? "STOP-SPIN" : "SPIN-SPIN"; }
 
 static void tileValue(uint8_t t, char *out, size_t n) {
-  if (t == TILE_DIR) { snprintf(out, n, "%s", bidi() ? dirName(gSet.testDir) : "FWD"); return; }
-  if (t == TILE_LOW && bidi()) { snprintf(out, n, "1500"); return; }
+  if (t == TILE_MODE) { snprintf(out, n, "%s", modeName()); return; }
+  if (t == TILE_LOW && stopSpin()) { snprintf(out, n, "%u", (unsigned)escIdleUs()); return; }
   if (t == TILE_CYC && !logTab()) { snprintf(out, n, "CONT."); return; }
   snprintf(out, n, "%lu", (unsigned long)tileGet(t));
 }
 
 /* Label for the tile caption (units included) and for the editor box. */
 static const char *tileCaption(uint8_t t) {
-  static const char *const CAP[TILE_N] = { "LOW US", "HIGH US", "RAMP UP MS", "DWELL HI MS",
-                                           "RAMP DOWN MS", "DWELL LO MS", "DIRECTION", "CYCLES" };
-  if (t == TILE_LOW && bidi()) return "LOW = NEUTRAL";
-  if (t == TILE_HIGH && bidi()) return "HIGH US (FWD)";
+  static const char *const CAP[TILE_N] = { "LOW US", "SPIN US", "RAMP UP MS", "DWELL HI MS",
+                                           "RAMP DOWN MS", "DWELL LO MS", "CYCLE MODE", "CYCLES" };
+  if (t == TILE_LOW)  return stopSpin() ? (bidi() ? "LOW = NEUTRAL" : "LOW = STOP") : "LOW US";
+  if (t == TILE_HIGH) return stopSpin() ? "SPIN US" : "HIGH US";
   return CAP[t];
 }
 
 /* Apply a signed step to the selected tile, clamped to its valid range. */
 static void stepTile(uint8_t t, int32_t d) {
-  if (t == TILE_DIR) {
-    gSet.testDir = (uint8_t)((gSet.testDir + ESC_DIR_COUNT + (d > 0 ? 1 : -1)) % ESC_DIR_COUNT);
+  if (t == TILE_MODE) {
+    gSet.cycleMode = (uint8_t)((gSet.cycleMode + CYC_MODE_COUNT + (d > 0 ? 1 : -1)) % CYC_MODE_COUNT);
     return;
   }
   int32_t v = (int32_t)tileGet(t) + d, lo, hi;
   switch (t) {
-    case TILE_LOW:  lo = ESC_ABS_MIN_US; hi = gSet.profHighUs - 10; break;
-    case TILE_HIGH: lo = bidi() ? ESC_BIDI_IDLE_US + 10 : gSet.profLowUs + 10; hi = ESC_ABS_MAX_US; break;
+    /* Both ends are plain pulses now, anywhere in the band and in either
+     * order: a cycle from 1750 down to 1250 is as valid as the other way up,
+     * and on a bidirectional ESC that is how you run one side to the other. */
+    case TILE_LOW: case TILE_HIGH: lo = ESC_ABS_MIN_US; hi = ESC_ABS_MAX_US; break;
     case TILE_RUP: case TILE_RDN: lo = 0; hi = PROF_RAMP_MAX_MS; break;
     case TILE_DHI: case TILE_DLO: lo = PROF_DWELL_MIN_MS; hi = PROF_DWELL_MAX_MS; break;
     default:        lo = 1; hi = PROF_CYCLES_MAX; break;
@@ -145,7 +157,7 @@ static void drawTileN(uint8_t t) {
 static void editorLabels(uint8_t which, char *out, size_t n) {
   uint32_t small, big;
   tileSteps(sSel, small, big);
-  if (sSel == TILE_DIR) { snprintf(out, n, "%s", which == 1 ? "<" : which == 2 ? ">" : ""); return; }
+  if (sSel == TILE_MODE) { snprintf(out, n, "%s", which == 1 ? "<" : which == 2 ? ">" : ""); return; }
   uint32_t s = (which == 0 || which == 3) ? big : small;
   char sign = (which < 2) ? '-' : '+';
   /* A whole number of seconds reads as "+10 S" rather than "+10000" — five
@@ -173,7 +185,7 @@ static void drawValueBox() {
   char v[16], line[24];
   tileValue(sSel, v, sizeof v);
   if (sSel == TILE_LOW || sSel == TILE_HIGH)        snprintf(line, sizeof line, "%s US", v);
-  else if (sSel == TILE_DIR || sSel == TILE_CYC)    snprintf(line, sizeof line, "%s", v);
+  else if (sSel == TILE_MODE || sSel == TILE_CYC)   snprintf(line, sizeof line, "%s", v);
   else                                              snprintf(line, sizeof line, "%s MS", v);
   const JCRRect &r = TMC_VALUE_BOX;
   bool en = tileEnabled(sSel);
@@ -276,7 +288,7 @@ void updateTestCycleTick(bool forceClear) {
 
   /* Line 1: what is on the pin right now. */
   if (escArmed())
-    snprintf(buf, sizeof buf, "OUT %u US%s", (unsigned)gEscOutUs, escCycleReverse() ? "  REV" : "");
+    snprintf(buf, sizeof buf, "OUT %u US%s", (unsigned)gEscOutUs, escOutIsReverse() ? "  REV" : "");
   else if (escTesting())
     snprintf(buf, sizeof buf, "OUTPUT OFF - LOGGING POST-ROLL");
   else
@@ -311,7 +323,7 @@ int8_t testCycleHit(int16_t x, int16_t y) {
 
 bool testCycleRepeatable(int8_t id) {
   if (id < TH_N) return testHeaderRepeatable(id);
-  if (id < TMC_BIG_M || id > TMC_BIG_P || running() || sSel == TILE_DIR) return false;
+  if (id < TMC_BIG_M || id > TMC_BIG_P || running() || sSel == TILE_MODE) return false;
   return editorEnabled((uint8_t)(id - TMC_BIG_M));
 }
 
@@ -343,8 +355,7 @@ void testCycleDispatch(int8_t id) {
   if (id >= TMC_TILE0 && id < TMC_TILE0 + (int)TILE_N) {
     uint8_t t = (uint8_t)(id - TMC_TILE0);
     if (!tileEnabled(t)) {
-      showToast(t == TILE_LOW ? "Bidirectional: low end = neutral 1500" :
-                t == TILE_DIR ? "Direction applies to bidirectional ESCs" :
+      showToast(t == TILE_LOW ? "STOP-SPIN: low end is the ESC's stop pulse" :
                                 "CYCLE runs until STOP");
       return;
     }
@@ -365,6 +376,9 @@ void testCycleDispatch(int8_t id) {
     int32_t mag = (int32_t)((which == 0 || which == 3) ? big : small);
     stepTile(sSel, which < 2 ? -mag : mag);
     drawTileN(sSel);
+    /* The mode decides whether LOW is the locked stop pulse and whether HIGH
+     * is captioned SPIN US, so both tiles change face with it. */
+    if (sSel == TILE_MODE) { drawTileN(TILE_LOW); drawTileN(TILE_HIGH); }
     drawValueBox();
     /* Crossing 5 s changes which gear the buttons are in, so relabel them. */
     for (uint8_t w = 0; w < 4; w++) drawEditorBtn(w, w == which);

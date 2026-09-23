@@ -16,9 +16,18 @@
  * ramp and jerk. Its length is the operator's setting, since how long an ESC
  * takes to come up is a property of the ESC.
  *
- * Bidirectional ESCs: the low end is neutral (1500 us) and `reverse` mirrors
- * the high pulse about neutral, so a 1750 us forward profile runs 1250 us in
- * reverse. Unidirectional profiles ignore `reverse`.
+ * CYCLE MODE decides what the low end of a cycle is:
+ *   STOP -> SPIN   the low end is the ESC type's idle (1000 uni / 1500 bidi),
+ *                  locked, and SPIN US is a free 1000-2000 pulse. On a
+ *                  bidirectional ESC that covers reverse simply by setting
+ *                  SPIN below 1500 — no mirroring, no direction setting: the
+ *                  number on the screen is the number on the pin.
+ *   SPIN -> SPIN   both ends are free 1000-2000, for cycling between two
+ *                  running points (two throttle levels, or one side of
+ *                  neutral to the other on a bidirectional ESC).
+ * Nothing here interprets a pulse as "forward" or "reverse"; that is the
+ * ESC's business, and a bidirectional one has to be in its own 3D mode for
+ * pulses below neutral to mean anything.
  * ========================================================================*/
 #pragma once
 #include <stdint.h>
@@ -31,12 +40,13 @@
 #define ESC_TEST_POST_MS   5000     /* Log Test post-roll at idle         */
 
 enum EscType : uint8_t { ESC_TYPE_UNI = 0, ESC_TYPE_BIDI = 1 };
-enum EscDir  : uint8_t { ESC_DIR_FWD = 0, ESC_DIR_REV = 1, ESC_DIR_ALT = 2, ESC_DIR_COUNT = 3 };
+enum CycleMode : uint8_t { CYC_STOP_SPIN = 0, CYC_SPIN_SPIN = 1, CYC_MODE_COUNT = 2 };
 
 enum EscPhase : uint8_t {
   PH_OFF = 0,     /* disarmed, nothing running                               */
   PH_MANUAL,      /* armed, manual set point                                 */
   PH_PRE,         /* pre-roll at idle, before cycle 1 of any run             */
+  PH_ENTRY,       /* lead-in: idle -> the cycle's low end, over rampUpMs      */
   PH_RAMP_UP, PH_DWELL_HI, PH_RAMP_DN, PH_DWELL_LO,
   PH_POST,        /* Log Test post-roll (output idle, or off after a STOP)   */
   PH_COUNT
@@ -53,6 +63,7 @@ struct EscProfile {
   uint16_t rampDnMs;
   uint32_t dwellLoMs;
   uint16_t preMs;                   /* pre-roll at idle before cycle 1      */
+  uint8_t  mode;                    /* CycleMode - snapshotted with the rest */
 };
 
 /* Idle / neutral pulse for an ESC type. */
@@ -60,23 +71,21 @@ static inline uint16_t escTypeIdleUs(uint8_t type) {
   return type == ESC_TYPE_BIDI ? ESC_BIDI_IDLE_US : ESC_UNI_IDLE_US;
 }
 
-/* The low end of the profile: the configured low for UNI, neutral for BIDI. */
+/* The low end of a cycle: the ESC type's idle in STOP -> SPIN, the configured
+ * low in SPIN -> SPIN. */
 static inline uint16_t profileLowUs(const EscProfile &p, uint8_t type) {
-  return type == ESC_TYPE_BIDI ? ESC_BIDI_IDLE_US : p.lowUs;
+  return p.mode == CYC_STOP_SPIN ? escTypeIdleUs(type) : p.lowUs;
 }
 
-/* The high end, mirrored about neutral for a reverse BIDI cycle. */
-static inline uint16_t profileHighUs(const EscProfile &p, uint8_t type, bool reverse) {
-  if (type == ESC_TYPE_BIDI && reverse)
-    return (uint16_t)(2 * ESC_BIDI_IDLE_US - p.highUs);
-  return p.highUs;
-}
+/* The high end is exactly what was set. */
+static inline uint16_t profileHighUs(const EscProfile &p) { return p.highUs; }
 
 /* How long a phase lasts, in ms. 0 = move on immediately (0 ms ramp).
  * PH_OFF / PH_MANUAL are not timed here. */
 static inline uint32_t profilePhaseMs(uint8_t ph, const EscProfile &p) {
   switch (ph) {
     case PH_PRE:      return p.preMs;
+    case PH_ENTRY:    return p.rampUpMs;
     case PH_RAMP_UP:  return p.rampUpMs;
     case PH_DWELL_HI: return p.dwellHiMs;
     case PH_RAMP_DN:  return p.rampDnMs;
@@ -90,10 +99,21 @@ static inline uint32_t profilePhaseMs(uint8_t ph, const EscProfile &p) {
  * rounding and clamp at their end, so an overshooting tick never leaves the
  * [low, high] band. */
 static inline uint16_t profilePulse(uint8_t ph, uint32_t elapsedMs, const EscProfile &p,
-                                    uint8_t type, bool reverse) {
+                                    uint8_t type) {
   int32_t lo = profileLowUs(p, type);
-  int32_t hi = profileHighUs(p, type, reverse);
+  int32_t hi = profileHighUs(p);
   switch (ph) {
+    /* Lead-in: the pre-roll sits at idle, and in SPIN -> SPIN the cycle's low
+     * end is a running pulse, so the two are joined by a ramp rather than a
+     * step. In STOP -> SPIN low IS idle and EscOut skips this phase. */
+    case PH_ENTRY: {
+      int32_t from = escTypeIdleUs(type);
+      if (p.rampUpMs == 0 || elapsedMs >= p.rampUpMs) return (uint16_t)lo;
+      int32_t num = (lo - from) * (int32_t)elapsedMs;
+      int32_t d = (num >= 0 ? num + (int32_t)p.rampUpMs / 2 : num - (int32_t)p.rampUpMs / 2)
+                  / (int32_t)p.rampUpMs;
+      return (uint16_t)(from + d);
+    }
     case PH_RAMP_UP:
     case PH_RAMP_DN: {
       uint32_t len = ph == PH_RAMP_UP ? p.rampUpMs : p.rampDnMs;
@@ -108,11 +128,4 @@ static inline uint16_t profilePulse(uint8_t ph, uint32_t elapsedMs, const EscPro
     case PH_DWELL_LO: return (uint16_t)lo;
     default:          return escTypeIdleUs(type);   /* PRE, POST, MANUAL idle   */
   }
-}
-
-/* Whether cycle `index` (0-based) runs in reverse for a direction setting. */
-static inline bool profileCycleReverse(uint8_t dir, uint16_t index) {
-  if (dir == ESC_DIR_REV) return true;
-  if (dir == ESC_DIR_ALT) return (index & 1) != 0;
-  return false;
 }

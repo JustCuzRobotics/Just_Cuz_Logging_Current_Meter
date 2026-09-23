@@ -20,11 +20,9 @@ static bool     sTest      = false;     /* the run is a Log Test            */
 static bool     sAborted   = false;
 static uint16_t sCycleIdx  = 0;         /* completed cycles                 */
 static uint16_t sCycleTarget = 0;
-static bool     sReverse   = false;
 static uint16_t sManualUs  = ESC_UNI_IDLE_US;
 static EscProfile sRun;                 /* snapshot at run start            */
 static uint8_t  sRunType   = ESC_TYPE_UNI;
-static uint8_t  sRunDir    = ESC_DIR_FWD;
 /* When a run ends the output stays live at neutral so the next one starts
  * instantly. This is the fuse that cuts it if nothing then happens. 0 = no
  * fuse running (manual work, or already cut). */
@@ -96,14 +94,13 @@ static void snapshotProfile() {
   sRun.rampDnMs  = gSet.profRampDnMs;
   sRun.dwellLoMs = gSet.profDwellLoMs;
   sRunType = gSet.escType;
-  sRunDir  = gSet.testDir;
+  sRun.mode = gSet.cycleMode;
 }
 
 /* First cycle of a run. Called from the tick when the pre-roll ends, so the
  * phase start is fixed up by the caller's schedule bookkeeping. */
 static void startCycle0() {
   sCycleIdx = 0;
-  sReverse = profileCycleReverse(sRunDir, 0);
   sPhase = PH_RAMP_UP;
 }
 
@@ -236,8 +233,8 @@ void escCycleStop() {
 }
 
 bool escCycling() {
-  return !sTest && (sPhase == PH_PRE || sPhase == PH_RAMP_UP || sPhase == PH_DWELL_HI ||
-                    sPhase == PH_RAMP_DN || sPhase == PH_DWELL_LO);
+  return !sTest && (sPhase == PH_PRE || sPhase == PH_ENTRY || sPhase == PH_RAMP_UP ||
+                    sPhase == PH_DWELL_HI || sPhase == PH_RAMP_DN || sPhase == PH_DWELL_LO);
 }
 
 bool escTestStart(uint16_t cycles) {
@@ -293,7 +290,16 @@ uint8_t escTick() {
     uint32_t next = (el - len > 50) ? now : sPhaseStartMs + len;
 
     switch (sPhase) {
-      case PH_PRE:      startCycle0(); break;
+      /* The pre-roll ends at idle. If the cycle's low end is somewhere else
+       * (SPIN -> SPIN), ease into it over the ramp-up time rather than
+       * stepping — the ESC has just finished arming and WILL respond. */
+      case PH_PRE:
+        if (profileLowUs(sRun, sRunType) != escTypeIdleUs(sRunType) && sRun.rampUpMs)
+          sPhase = PH_ENTRY;
+        else
+          startCycle0();
+        break;
+      case PH_ENTRY:    startCycle0(); break;
       case PH_RAMP_UP:  sPhase = PH_DWELL_HI; break;
       case PH_DWELL_HI: sPhase = PH_RAMP_DN;  break;
       case PH_RAMP_DN:  sPhase = PH_DWELL_LO; break;
@@ -302,7 +308,6 @@ uint8_t escTick() {
         if (sTest && sCycleIdx >= sCycleTarget) {
           sPhase = PH_POST;
         } else {
-          sReverse = profileCycleReverse(sRunDir, sCycleIdx);
           sPhase = PH_RAMP_UP;
         }
         break;
@@ -332,8 +337,8 @@ uint8_t escTick() {
     uint16_t us;
     if (sHolding)               us = escIdleUs();
     else if (sPhase == PH_MANUAL) us = sManualUs;
-    else if (sPhase >= PH_RAMP_UP && sPhase <= PH_DWELL_LO)
-      us = profilePulse(sPhase, now - sPhaseStartMs, sRun, sRunType, sReverse);
+    else if (sPhase == PH_ENTRY || (sPhase >= PH_RAMP_UP && sPhase <= PH_DWELL_LO))
+      us = profilePulse(sPhase, now - sPhaseStartMs, sRun, sRunType);
     else                        us = escTypeIdleUs(sRunType);   /* ARMING/PRE/POST */
     setLevel(clampUs(us));
   }
@@ -359,7 +364,14 @@ uint16_t escCycleNum() {
   return 0;
 }
 uint16_t escCycleTarget()  { return sCycleTarget; }
-bool     escCycleReverse() { return sReverse && sRunType == ESC_TYPE_BIDI; }
+/* Display only: a bidirectional ESC in its 3D mode runs backwards below
+ * neutral, so anything under 1500 is shown as REV. Nothing in the engine
+ * cares — the profile is plain pulse values. */
+bool     escOutIsReverse() {
+  /* The LIVE ESC type, not the run snapshot: this is a label for whatever is
+   * on the pin right now, including a manual set point with no run at all. */
+  return sArmed && gSet.escType == ESC_TYPE_BIDI && gEscOutUs && gEscOutUs < ESC_BIDI_IDLE_US;
+}
 const EscProfile &escRunProfile() { return sRun; }
 
 const char *escPhaseName(EscPhase p) {
@@ -367,6 +379,7 @@ const char *escPhaseName(EscPhase p) {
     case PH_OFF:      return "OFF";
     case PH_MANUAL:   return "MANUAL";
     case PH_PRE:      return "PRE-ROLL";
+    case PH_ENTRY:    return "LEAD-IN";
     case PH_RAMP_UP:  return "RAMP UP";
     case PH_DWELL_HI: return "DWELL HI";
     case PH_RAMP_DN:  return "RAMP DN";

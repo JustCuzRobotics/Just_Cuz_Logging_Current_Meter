@@ -80,7 +80,7 @@ struct Settings {
   uint8_t  escType;        /* EscType: UNI / BIDI                          */
   uint8_t  ctrlStyle;      /* CtrlStyle: manual steppers or slider         */
   uint8_t  releaseMode;    /* ReleaseMode: slider hold or dead-man         */
-  uint8_t  testDir;        /* EscDir: FWD / REV / FWD+REV (BIDI only)      */
+  uint8_t  cycleMode;      /* CycleMode: STOP->SPIN or SPIN->SPIN          */
   uint8_t  testTab;        /* last Test Mode tab (0 manual, 1 cycle, 2 log) */
   uint16_t profLowUs, profHighUs;
   uint16_t profRampUpMs, profRampDnMs;
@@ -106,4 +106,5 @@ void settingsDefaults(Settings &s);
 /* Profile defaults for the current ESC type (RESET DEFAULTS on the Cycle tab),
  * and a range check that snaps the high pulse into the type's valid band. */
 void settingsProfileDefaults(Settings &s);
+void clampProfileRange(Settings &s);   /* pulses back inside 1000-2000       */
 void settingsFixProfileForType(Settings &s);

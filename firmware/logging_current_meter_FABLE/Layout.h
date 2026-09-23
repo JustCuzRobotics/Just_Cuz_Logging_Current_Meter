@@ -143,9 +143,7 @@ inline const JCRRect TMM_TRACK = { 22, 178, 436, 60 };
 enum { TMC_TILE0 = TH_N,                      /* 8 tiles                      */
        TMC_BIG_M = TMC_TILE0 + 8, TMC_SMALL_M, TMC_SMALL_P, TMC_BIG_P,
        TMC_RESET, TMC_START, TMC_N };
-enum { TILE_LOW, TILE_HIGH, TILE_RUP, TILE_DHI, TILE_RDN, TILE_DLO, TILE_DIR, TILE_CYC, TILE_N };
-inline const char *const TILE_LABEL[TILE_N] = { "LOW US", "HIGH US", "RAMP UP", "DWELL HI",
-                                                "RAMP DOWN", "DWELL LO", "DIRECTION", "CYCLES" };
+enum { TILE_LOW, TILE_HIGH, TILE_RUP, TILE_DHI, TILE_RDN, TILE_DLO, TILE_MODE, TILE_CYC, TILE_N };
 inline const Target TMC_T[TMC_N - TH_N] = {
   { {  8,  70, 113, 44}, {  0,  66, 123, 50} },   /* tiles, row 1            */
   { {125,  70, 113, 44}, {123,  66, 117, 50} },

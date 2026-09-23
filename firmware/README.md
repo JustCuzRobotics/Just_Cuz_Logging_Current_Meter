@@ -3,7 +3,7 @@
 | Sketch | Purpose |
 |---|---|
 | `display_bringup/` | Full board diagnostic and calibration tool. Exercises all 20 usable GPIO, reports pass/fail per subsystem with net names, and fits the analog calibration constants |
-| `logging_current_meter_FABLE/` | **The current UI (v3.5).** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, Test Mode (manual / ramped cycle / logged cycle test, one-direction or bidirectional ESCs), **SD logging with manual / cycle / current-threshold start and a USB CSV stream**, Settings with flash persistence, a settable wall clock that stamps logs, two themes, tunable V/I filter, touch diagnostics with a serial telemetry harness. One module per concern; built on `libraries/JCR_TouchScreen/` |
+| `logging_current_meter_FABLE/` | **The current UI (v3.6).** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, Test Mode (manual / ramped cycle / logged cycle test, one-direction or bidirectional ESCs), **SD logging with manual / cycle / current-threshold start and a USB CSV stream**, Settings with flash persistence, a settable wall clock that stamps logs, two themes, tunable V/I filter, touch diagnostics with a serial telemetry harness. One module per concern; built on `libraries/JCR_TouchScreen/` |
 | `FABLE_DEV_TEST_SCREEN/` | Minimal touch-reliability test firmware. The quickest way to prove a panel and its touch mapping in isolation |
 | `logging_current_meter_ui/` | Superseded predecessor (v1.7, Arduino_GFX). Kept as a reference until the new UI is bench-verified |
 | `touch_dev_test/` | Earlier touch experiment. Superseded; not a reference |
@@ -270,19 +270,33 @@ than making you stop first.
 
 | Tile | Range | Steps |
 |---|---|---|
-| LOW US (UNI only; BIDI low = 1500) | 1000 – high−10 | 10 / 50 |
-| HIGH US (BIDI: forward pulse, reverse mirrors it about 1500) | UNI low+10 – 2000, BIDI 1510 – 2000 | 10 / 50 |
+| LOW US (SPIN→SPIN only; in STOP→SPIN it is the type's stop pulse, greyed) | 1000 – 2000 | 10 / 50 |
+| SPIN US / HIGH US | 1000 – 2000 | 10 / 50 |
 | RAMP UP / RAMP DOWN ms | 0 – 3000 (0 = instant step) | 50 / 500 |
 | DWELL HI / DWELL LO ms | 500 – 180000 (3 min) | 50 / 500 below 5 s, **1 s / 10 s above** |
-| DIRECTION (BIDI only) | FWD / REV / FWD+REV (alternates each cycle) | ◀ ▶ |
+| CYCLE MODE | STOP→SPIN · SPIN→SPIN | ◀ ▶ |
 | CYCLES (LOG TEST only) | 1 – 999 | 1 / 10 |
+
+  **CYCLE MODE** (v3.6) decides what the bottom of a cycle is. **STOP→SPIN** locks the low end
+  to the ESC type's stop pulse (1000 one-direction, 1500 bidirectional) and leaves SPIN US free
+  across the whole 1000–2000 band — so a bidirectional ESC runs *backwards* simply by setting
+  SPIN below 1500. The number on the screen is the number on the pin: no mirroring, and no
+  direction setting (the v3.3–v3.5 DIRECTION tile is gone). **SPIN→SPIN** frees both ends, for
+  cycling between two running points — two throttle levels, or one side of neutral to the other.
+  Either order is allowed, so a profile can ramp downward. Note that a pulse below 1500 only
+  means reverse if the ESC's own firmware is in bidirectional (3D) mode; otherwise it is just a
+  low forward throttle. In SPIN→SPIN the run eases from the pre-roll's idle into LOW over the
+  ramp-up time (a LEAD-IN phase) rather than stepping; STOP→SPIN skips it, since its low end is
+  idle already. Changing ESC TYPE resets the cycle's low end to the new type's stop pulse and
+  the mode to STOP→SPIN, because 1000 µs means "stopped" under one type and "full reverse"
+  under the other.
 
   Millisecond tiles change gear with their own value: a 3-minute dwell set 500 ms at a time
   would be 360 taps, so above 5 s the buttons become 1 s and 10 s and relabel themselves
   (`+1 S`, `+10 S`) as you cross the threshold. Dwells are stored as 32-bit values for this.
 
-  Defaults (RESET DEFAULTS, tap twice within 2 s): UNI 1000→1500 µs (BIDI high 1750),
-  ramps 1000 ms, dwells 3000 ms, 10 cycles, FWD. The profile is locked while a run is
+  Defaults (RESET DEFAULTS, tap twice within 2 s): STOP→SPIN, spin 1500 µs (1750 for a
+  bidirectional ESC), ramps 1000 ms, dwells 3000 ms, 10 cycles. The profile is locked while a run is
   active and snapshotted at its start.
 - **CYCLE** runs RAMP UP → DWELL HI → RAMP DOWN → DWELL LO until STOP CYCLE (which leaves
   the output armed at idle). LOG MODE = CYCLE still auto-logs these runs.
@@ -292,7 +306,7 @@ than making you stop first.
   first, which also means the card mount can never block with a motor under throttle. ABORT TEST jumps to the post-roll at idle; header STOP
   cuts the output and finishes the post-roll unpowered — either way the spin-down is logged
   and the file ends `reason=aborted`. The header carries a `# profile …` line (ESC type,
-  pulses, ramps, dwells, cycles, direction) that the log analyzer shows in its stats box,
+  pulses, ramps, dwells, cycles, cycle mode) that the log analyzer shows in its stats box,
   and the main chart gains an ESC-pulse strip. While a test runs, the LOG screen's
   START/STOP and serial `g` are refused, the DURATION limit does not apply, and the CURRENT
   trigger stays out of the way.

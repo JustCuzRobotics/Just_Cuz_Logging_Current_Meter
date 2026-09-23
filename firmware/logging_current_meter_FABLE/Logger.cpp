@@ -237,13 +237,12 @@ static void writeHeader() {
   if (sCause == CAUSE_TEST) {
     /* Everything needed to reproduce the run. The analyzer parses this line. */
     hcat(h, sizeof h, k, "# profile esc=%s low_us=%u high_us=%u ramp_up_ms=%u dwell_hi_ms=%u "
-                         "ramp_dn_ms=%u dwell_lo_ms=%u cycles=%u dir=%s pre_ms=%u post_ms=%u\n",
+                         "ramp_dn_ms=%u dwell_lo_ms=%u cycles=%u mode=%s pre_ms=%u post_ms=%u\n",
          gSet.escType == ESC_TYPE_BIDI ? "BIDI" : "UNI",
-         (unsigned)(gSet.escType == ESC_TYPE_BIDI ? ESC_BIDI_IDLE_US : gSet.profLowUs),
+         (unsigned)(gSet.cycleMode == CYC_STOP_SPIN ? escTypeIdleUs(gSet.escType) : gSet.profLowUs),
          (unsigned)gSet.profHighUs, (unsigned)gSet.profRampUpMs, (unsigned)gSet.profDwellHiMs,
          (unsigned)gSet.profRampDnMs, (unsigned)gSet.profDwellLoMs, (unsigned)gSet.profCycles,
-         gSet.escType != ESC_TYPE_BIDI ? "FWD" :
-           (gSet.testDir == ESC_DIR_REV ? "REV" : gSet.testDir == ESC_DIR_ALT ? "FWD+REV" : "FWD"),
+         gSet.cycleMode == CYC_SPIN_SPIN ? "spin-spin" : "stop-spin",
          (unsigned)gSet.preRollMs, (unsigned)ESC_TEST_POST_MS);
   }
   /* When the run happened. state= says how far to trust it: set = set this

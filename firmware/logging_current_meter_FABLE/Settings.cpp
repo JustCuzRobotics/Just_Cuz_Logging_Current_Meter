@@ -18,7 +18,7 @@ uint16_t filterWindowMs(uint8_t i) {
 Settings gSet;
 
 #define SETTINGS_MAGIC   0x4A43524CUL   /* 'JCRL' */
-#define SETTINGS_VERSION 6
+#define SETTINGS_VERSION 7
 #define SETTINGS_ADDR    0
 
 struct StoredSettings {
@@ -32,7 +32,8 @@ struct StoredSettings {
 /* Earlier layouts, kept only for migration. Each must stay byte-identical to
  * the struct that build saved. v1 = v3.1c, v2 = v3.2 / v3.2a, v3 = v3.3,
  * v4 = v3.4 (the wall clock, before the pre-roll setting), v5 = the first
- * v3.5 build, before dwells grew to 32 bits. */
+ * v3.5 build, before dwells grew to 32 bits, v6 = the same layout as v7 but
+ * with that byte holding the old FWD/REV/FWD+REV direction. */
 struct SettingsV1 {
   uint8_t  theme, filterIndex;
   uint16_t escPulseUs, escPeriodUs;
@@ -66,6 +67,10 @@ struct SettingsV4 {
 };
 static_assert(sizeof(SettingsV4) == 32, "SettingsV4 must match what v3.4 wrote");
 
+/* v6 is v7's layout exactly; only the meaning of one byte changed, so it is
+ * read through the live struct and that byte is reset below. */
+typedef Settings SettingsV6;
+
 /* v5 is v6 with 16-bit dwells inline among the other uint16s. */
 struct SettingsV5 {
   uint32_t clockEpoch;
@@ -93,28 +98,36 @@ static bool s_fromFlash = false;
 static Settings s_flashCopy;
 
 void settingsProfileDefaults(Settings &s) {
-  s.profLowUs     = ESC_UNI_IDLE_US;
+  s.profLowUs     = escTypeIdleUs(s.escType);
   s.profHighUs    = s.escType == ESC_TYPE_BIDI ? PROF_BIDI_HIGH_DEF : PROF_UNI_HIGH_DEF;
   s.profRampUpMs  = 1000;
   s.profDwellHiMs = 3000;
   s.profRampDnMs  = 1000;
   s.profDwellLoMs = 3000;
   s.profCycles    = 10;
-  s.testDir       = ESC_DIR_FWD;
+  s.cycleMode     = CYC_STOP_SPIN;
 }
 
-/* UNI: 1000 <= low < high <= 2000. BIDI: the high end is the forward pulse,
- * 1510-2000 (reverse is its mirror), low is unused. Anything outside is put
- * back to the type's default rather than clamped into something surprising. */
+/* Called when the ESC TYPE changes, where the danger is a profile that meant
+ * one thing under the old type and something else under the new one: a
+ * 1000 us low end is a stop on a unidirectional ESC and FULL REVERSE on a
+ * bidirectional one in 3D mode. So the low end is reset to the new type's
+ * stop pulse and the cycle goes back to STOP -> SPIN; the high end is a
+ * literal pulse either way and is kept (range-checked). The caller says so on
+ * screen. */
 void settingsFixProfileForType(Settings &s) {
-  if (s.escType == ESC_TYPE_BIDI) {
-    if (s.profHighUs < ESC_BIDI_IDLE_US + 10 || s.profHighUs > ESC_ABS_MAX_US)
-      s.profHighUs = PROF_BIDI_HIGH_DEF;
-  } else {
-    if (s.profLowUs < ESC_ABS_MIN_US || s.profLowUs > ESC_ABS_MAX_US - 10) s.profLowUs = ESC_UNI_IDLE_US;
-    if (s.profHighUs <= s.profLowUs || s.profHighUs > ESC_ABS_MAX_US)     s.profHighUs = PROF_UNI_HIGH_DEF;
-    if (s.profHighUs <= s.profLowUs) s.profLowUs = ESC_UNI_IDLE_US;
-  }
+  s.cycleMode = CYC_STOP_SPIN;
+  s.profLowUs = escTypeIdleUs(s.escType);
+  clampProfileRange(s);
+}
+
+/* Both pulses are literal now, so loading an old blob only has to drag them
+ * back inside the absolute band — not reinterpret them. */
+void clampProfileRange(Settings &s) {
+  if (s.profLowUs < ESC_ABS_MIN_US || s.profLowUs > ESC_ABS_MAX_US)
+    s.profLowUs = escTypeIdleUs(s.escType);
+  if (s.profHighUs < ESC_ABS_MIN_US || s.profHighUs > ESC_ABS_MAX_US)
+    s.profHighUs = s.escType == ESC_TYPE_BIDI ? PROF_BIDI_HIGH_DEF : PROF_UNI_HIGH_DEF;
 }
 
 void settingsDefaults(Settings &s) {
@@ -155,7 +168,7 @@ static bool plausible(const Settings &s) {
   if (s.logDurIdx >= LOG_DUR_COUNT) return false;
   if (!inRange(s.logThreshA, LOG_THRESH_MIN_A, LOG_THRESH_MAX_A)) return false;
   if (s.streamOn > 1 || s.escType > 1 || s.ctrlStyle > 1 || s.releaseMode > 1) return false;
-  if (s.testDir >= ESC_DIR_COUNT || s.testTab > 2) return false;
+  if (s.cycleMode >= CYC_MODE_COUNT || s.testTab > 2) return false;
   if (s.clockEverSet > 1) return false;
   if (s.clockEverSet && !clockEpochPlausible(s.clockEpoch)) return false;
   if (s.preRollMs > PRE_ROLL_MAX_MS) return false;
@@ -168,6 +181,23 @@ static bool plausible(const Settings &s) {
   return true;
 }
 
+/* Direction is gone as of v7: a reverse run is a SPIN pulse below neutral, so
+ * the old setting has to be folded into the pulse or the motion changes under
+ * the operator. REV stored the forward MAGNITUDE and emitted its mirror, so
+ * the equivalent literal pulse is that mirror. FWD+REV alternated and cannot
+ * be expressed by one profile, so it migrates to its forward half — the
+ * changelog says so, and the tile shows the pulse it will actually emit. */
+static void migrateDirection(Settings &m, uint8_t oldDir) {
+  const uint8_t OLD_DIR_REV = 1;
+  if (oldDir == OLD_DIR_REV && m.escType == ESC_TYPE_BIDI) {
+    int32_t mirrored = 2 * (int32_t)ESC_BIDI_IDLE_US - (int32_t)m.profHighUs;
+    if (mirrored < ESC_ABS_MIN_US) mirrored = ESC_ABS_MIN_US;
+    if (mirrored > ESC_ABS_MAX_US) mirrored = ESC_ABS_MAX_US;
+    m.profHighUs = (uint16_t)mirrored;
+  }
+  m.cycleMode = CYC_STOP_SPIN;
+}
+
 /* Carry an older build's cycle values into the v3 profile. Old dwells could be
  * as short as 200 ms; v3's floor is 500. Old cycles had no ramps, so the
  * migrated profile gets the default 1000 ms ramps — the whole point of v3. */
@@ -176,7 +206,7 @@ static void migrateCycle(Settings &m, uint16_t loUs, uint16_t hiUs, uint32_t loM
   m.profHighUs = hiUs;
   m.profDwellLoMs = loMs < PROF_DWELL_MIN_MS ? PROF_DWELL_MIN_MS : (loMs > PROF_DWELL_MAX_MS ? PROF_DWELL_MAX_MS : loMs);
   m.profDwellHiMs = hiMs < PROF_DWELL_MIN_MS ? PROF_DWELL_MIN_MS : (hiMs > PROF_DWELL_MAX_MS ? PROF_DWELL_MAX_MS : hiMs);
-  settingsFixProfileForType(m);
+  clampProfileRange(m);
 }
 
 template <typename S> static bool readOld(StoredOld<S> &o) {
@@ -197,6 +227,13 @@ void settingsBegin() {
       plausible(st.s)) {
     gSet = st.s;
     s_fromFlash = true;
+  } else if (st.magic == SETTINGS_MAGIC && st.version == 6) {
+    StoredOld<SettingsV6> o;
+    if (readOld(o)) {
+      Settings m = o.s;
+      migrateDirection(m, o.s.cycleMode);   /* that byte WAS the direction */
+      if (plausible(m)) { gSet = m; s_fromFlash = true; }
+    }
   } else if (st.magic == SETTINGS_MAGIC && st.version == 5) {
     StoredOld<SettingsV5> o;
     if (readOld(o)) {
@@ -207,11 +244,12 @@ void settingsBegin() {
       m.logDurIdx = o.s.logDurIdx;      m.logThreshA = o.s.logThreshA;
       m.streamOn = o.s.streamOn;        m.escType = o.s.escType;
       m.ctrlStyle = o.s.ctrlStyle;      m.releaseMode = o.s.releaseMode;
-      m.testDir = o.s.testDir;          m.testTab = o.s.testTab;
+      m.testTab = o.s.testTab;
       m.profLowUs = o.s.profLowUs;      m.profHighUs = o.s.profHighUs;
       m.profRampUpMs = o.s.profRampUpMs; m.profDwellHiMs = o.s.profDwellHiMs;
       m.profRampDnMs = o.s.profRampDnMs; m.profDwellLoMs = o.s.profDwellLoMs;
       m.profCycles = o.s.profCycles;    m.preRollMs = o.s.preRollMs;
+      migrateDirection(m, o.s.testDir);  /* after the profile: it edits the pulse */
       if (plausible(m)) { gSet = m; s_fromFlash = true; }
     }
   } else if (st.magic == SETTINGS_MAGIC && st.version == 4) {
@@ -224,12 +262,13 @@ void settingsBegin() {
       m.logDurIdx = o.s.logDurIdx;      m.logThreshA = o.s.logThreshA;
       m.streamOn = o.s.streamOn;        m.escType = o.s.escType;
       m.ctrlStyle = o.s.ctrlStyle;      m.releaseMode = o.s.releaseMode;
-      m.testDir = o.s.testDir;          m.testTab = o.s.testTab;
+      m.testTab = o.s.testTab;
       m.profLowUs = o.s.profLowUs;      m.profHighUs = o.s.profHighUs;
       m.profRampUpMs = o.s.profRampUpMs; m.profDwellHiMs = o.s.profDwellHiMs;
       m.profRampDnMs = o.s.profRampDnMs; m.profDwellLoMs = o.s.profDwellLoMs;
       m.profCycles = o.s.profCycles;
       /* preRollMs keeps its default: v3.4 had no setting for it. */
+      migrateDirection(m, o.s.testDir);
       if (plausible(m)) { gSet = m; s_fromFlash = true; }
     }
   } else if (st.magic == SETTINGS_MAGIC && st.version == 3) {
@@ -241,12 +280,13 @@ void settingsBegin() {
       m.logDurIdx = o.s.logDurIdx;      m.logThreshA = o.s.logThreshA;
       m.streamOn = o.s.streamOn;        m.escType = o.s.escType;
       m.ctrlStyle = o.s.ctrlStyle;      m.releaseMode = o.s.releaseMode;
-      m.testDir = o.s.testDir;          m.testTab = o.s.testTab;
+      m.testTab = o.s.testTab;
       m.profLowUs = o.s.profLowUs;      m.profHighUs = o.s.profHighUs;
       m.profRampUpMs = o.s.profRampUpMs; m.profDwellHiMs = o.s.profDwellHiMs;
       m.profRampDnMs = o.s.profRampDnMs; m.profDwellLoMs = o.s.profDwellLoMs;
       m.profCycles = o.s.profCycles;
       /* No clock in a v3 blob: the clock comes up unset, as on a fresh board. */
+      migrateDirection(m, o.s.testDir);
       if (plausible(m)) { gSet = m; s_fromFlash = true; }
     }
   } else if (st.magic == SETTINGS_MAGIC && st.version == 2) {

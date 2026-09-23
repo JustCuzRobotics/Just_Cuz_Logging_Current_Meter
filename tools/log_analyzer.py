@@ -281,7 +281,12 @@ class MeterLog:
             lines.append(f"Peak temp: {m['peak_temp_c']:.1f} °C")
         prof = self.meta.get("profile")
         if prof:
-            lines.append(f"Test: {prof.get('cycles', '?')} cycles, { {'UNI': 'one-direction', 'BIDI': 'bidirectional'}.get(prof.get('esc'), prof.get('esc', '?'))} {prof.get('dir', '')}"
+            esc_kind = {"UNI": "one-direction", "BIDI": "bidirectional"}.get(
+                prof.get("esc"), prof.get("esc", "?"))
+            # v3.6+ logs carry mode=stop-spin|spin-spin; older ones carry
+            # dir=FWD|REV|FWD+REV from when reverse was a mirrored direction.
+            shape = prof.get("mode") or prof.get("dir", "")
+            lines.append(f"Test: {prof.get('cycles', '?')} cycles, {esc_kind} {shape}"
                          f" {prof.get('low_us', '?')}→{prof.get('high_us', '?')} us")
             lines.append(f"Ramp {prof.get('ramp_up_ms', '?')}/{prof.get('ramp_dn_ms', '?')} ms,"
                          f" dwell {prof.get('dwell_hi_ms', '?')}/{prof.get('dwell_lo_ms', '?')} ms")
