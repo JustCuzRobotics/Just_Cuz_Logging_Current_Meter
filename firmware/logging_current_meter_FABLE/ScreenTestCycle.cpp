@@ -10,9 +10,12 @@
  *   [RESET DEFAULTS]        [START ... / STOP ...]
  *
  * CYCLE runs RAMP UP -> DWELL HI -> RAMP DOWN -> DWELL LO until stopped.
- * LOG TEST opens LOG_<n>_TEST_<V>V.CSV, then 3 s pre-roll at idle (the 2 s
- * arming hold runs inside it), N cycles, 5 s post-roll, closes the log and
- * disarms. Aborting jumps to the post-roll so the spin-down is still logged.
+ * LOG TEST opens LOG_<n>_TEST_<V>V.CSV, then the pre-roll at idle (ESC
+ * PRE-ROLL in Settings, with the 2 s arming hold inside it), N cycles, a 5 s
+ * post-roll, and closes the log. The output stays live at neutral afterwards
+ * so the next test starts without the ESC's start-up, and a fuse cuts it if
+ * nothing else happens. Aborting jumps to the post-roll so the spin-down is
+ * still logged.
  *
  * The profile is locked while a run is active: EscOut snapshots it at start,
  * and the log header records it, so an edit mid-run would change neither —
@@ -41,27 +44,51 @@ static bool tileEnabled(uint8_t t) {
   return true;
 }
 
-static uint16_t *tileField(uint8_t t) {
+/* Read/write by tile. The dwells are 32-bit (up to 3 minutes) and everything
+ * else 16, so these go through a common uint32_t rather than a pointer. */
+static uint32_t tileGet(uint8_t t) {
   switch (t) {
-    case TILE_LOW:  return &gSet.profLowUs;
-    case TILE_HIGH: return &gSet.profHighUs;
-    case TILE_RUP:  return &gSet.profRampUpMs;
-    case TILE_DHI:  return &gSet.profDwellHiMs;
-    case TILE_RDN:  return &gSet.profRampDnMs;
-    case TILE_DLO:  return &gSet.profDwellLoMs;
-    case TILE_CYC:  return &gSet.profCycles;
-    default:        return nullptr;
+    case TILE_LOW:  return gSet.profLowUs;
+    case TILE_HIGH: return gSet.profHighUs;
+    case TILE_RUP:  return gSet.profRampUpMs;
+    case TILE_DHI:  return gSet.profDwellHiMs;
+    case TILE_RDN:  return gSet.profRampDnMs;
+    case TILE_DLO:  return gSet.profDwellLoMs;
+    case TILE_CYC:  return gSet.profCycles;
+    default:        return 0;
+  }
+}
+
+static void tilePut(uint8_t t, uint32_t v) {
+  switch (t) {
+    case TILE_LOW:  gSet.profLowUs     = (uint16_t)v; break;
+    case TILE_HIGH: gSet.profHighUs    = (uint16_t)v; break;
+    case TILE_RUP:  gSet.profRampUpMs  = (uint16_t)v; break;
+    case TILE_DHI:  gSet.profDwellHiMs = v;           break;
+    case TILE_RDN:  gSet.profRampDnMs  = (uint16_t)v; break;
+    case TILE_DLO:  gSet.profDwellLoMs = v;           break;
+    case TILE_CYC:  gSet.profCycles    = (uint16_t)v; break;
+    default: break;
   }
 }
 
 /* Editor steps per tile: {small, big}. DIRECTION steps through its three
- * choices with the small buttons; its big buttons are disabled. */
-static void tileSteps(uint8_t t, uint16_t &small, uint16_t &big) {
+ * choices with the small buttons; its big buttons are disabled.
+ *
+ * Millisecond tiles change gear: below 5 s the fine pair (50 / 500 ms) is what
+ * you want for a ramp, and above it the coarse pair (1 s / 10 s), because a
+ * 3-minute dwell set 500 ms at a time is 360 taps. The gear follows the value
+ * itself, so it changes under you as you cross 5 s — the buttons relabel to
+ * match. */
+static void tileSteps(uint8_t t, uint32_t &small, uint32_t &big) {
   switch (t) {
     case TILE_LOW: case TILE_HIGH: small = 10; big = 50;  break;
     case TILE_CYC:                 small = 1;  big = 10;  break;
     case TILE_DIR:                 small = 1;  big = 0;   break;
-    default:                       small = 50; big = 500; break;
+    default:
+      if (tileGet(t) > PROF_MS_COARSE_ABOVE) { small = 1000; big = 10000; }
+      else                                   { small = 50;   big = 500;   }
+      break;
   }
 }
 
@@ -73,7 +100,7 @@ static void tileValue(uint8_t t, char *out, size_t n) {
   if (t == TILE_DIR) { snprintf(out, n, "%s", bidi() ? dirName(gSet.testDir) : "FWD"); return; }
   if (t == TILE_LOW && bidi()) { snprintf(out, n, "1500"); return; }
   if (t == TILE_CYC && !logTab()) { snprintf(out, n, "CONT."); return; }
-  snprintf(out, n, "%u", (unsigned)*tileField(t));
+  snprintf(out, n, "%lu", (unsigned long)tileGet(t));
 }
 
 /* Label for the tile caption (units included) and for the editor box. */
@@ -91,9 +118,7 @@ static void stepTile(uint8_t t, int32_t d) {
     gSet.testDir = (uint8_t)((gSet.testDir + ESC_DIR_COUNT + (d > 0 ? 1 : -1)) % ESC_DIR_COUNT);
     return;
   }
-  uint16_t *f = tileField(t);
-  if (!f) return;
-  int32_t v = (int32_t)*f + d, lo, hi;
+  int32_t v = (int32_t)tileGet(t) + d, lo, hi;
   switch (t) {
     case TILE_LOW:  lo = ESC_ABS_MIN_US; hi = gSet.profHighUs - 10; break;
     case TILE_HIGH: lo = bidi() ? ESC_BIDI_IDLE_US + 10 : gSet.profLowUs + 10; hi = ESC_ABS_MAX_US; break;
@@ -103,7 +128,7 @@ static void stepTile(uint8_t t, int32_t d) {
   }
   if (v < lo) v = lo;
   if (v > hi) v = hi;
-  *f = (uint16_t)v;
+  tilePut(t, (uint32_t)v);
 }
 
 static uint32_t cycleMs() {
@@ -118,16 +143,20 @@ static void drawTileN(uint8_t t) {
 }
 
 static void editorLabels(uint8_t which, char *out, size_t n) {
-  uint16_t small, big;
+  uint32_t small, big;
   tileSteps(sSel, small, big);
   if (sSel == TILE_DIR) { snprintf(out, n, "%s", which == 1 ? "<" : which == 2 ? ">" : ""); return; }
-  uint16_t s = (which == 0 || which == 3) ? big : small;
-  snprintf(out, n, "%c%u", (which < 2) ? '-' : '+', (unsigned)s);
+  uint32_t s = (which == 0 || which == 3) ? big : small;
+  char sign = (which < 2) ? '-' : '+';
+  /* A whole number of seconds reads as "+10 S" rather than "+10000" — five
+   * digits would drop the label to the 5x7 fallback size anyway. */
+  if (s >= 1000 && s % 1000 == 0) snprintf(out, n, "%c%lu S", sign, (unsigned long)(s / 1000));
+  else                            snprintf(out, n, "%c%lu", sign, (unsigned long)s);
 }
 
 static bool editorEnabled(uint8_t which) {
   if (!tileEnabled(sSel) || running()) return false;
-  uint16_t small, big;
+  uint32_t small, big;
   tileSteps(sSel, small, big);
   return (which == 0 || which == 3) ? big != 0 : small != 0;
 }
@@ -223,8 +252,9 @@ void updateTestCycleTick(bool forceClear) {
                escPhaseName(ph), (unsigned long)(remain / 1000), (unsigned long)(remain % 1000 / 100));
   } else if (!logTab() && escCycling()) {
     col = COL_AMP;
-    if (ph == PH_ARMING)
-      snprintf(buf, sizeof buf, "ARMING  %lus", (unsigned long)((remain + 999) / 1000));
+    if (ph == PH_PRE)
+      snprintf(buf, sizeof buf, "PRE-ROLL AT IDLE  %lu.%lus", (unsigned long)(remain / 1000),
+               (unsigned long)(remain % 1000 / 100));
     else
       snprintf(buf, sizeof buf, "CYCLE %u  %s  %lu.%lus", (unsigned)escCycleNum(), escPhaseName(ph),
                (unsigned long)(remain / 1000), (unsigned long)(remain % 1000 / 100));
@@ -233,7 +263,7 @@ void updateTestCycleTick(bool forceClear) {
   } else if (escCycling()) {
     snprintf(buf, sizeof buf, "CYCLE RUNNING - SEE CYCLE TAB");
   } else if (logTab()) {
-    uint32_t tot = ESC_TEST_PRE_MS + ESC_TEST_POST_MS + (uint32_t)gSet.profCycles * cycleMs();
+    uint32_t tot = gSet.preRollMs + ESC_TEST_POST_MS + (uint32_t)gSet.profCycles * cycleMs();
     uint32_t s = (tot + 500) / 1000;
     snprintf(buf, sizeof buf, "READY  %u CYCLES  TOTAL %lu:%02lu", (unsigned)gSet.profCycles,
              (unsigned long)(s / 60), (unsigned long)(s % 60));
@@ -260,7 +290,8 @@ void updateTestCycleTick(bool forceClear) {
     else if (logState() == LOGST_NO_CARD || logState() == LOGST_ERROR)
       snprintf(buf, sizeof buf, "%s - INSERT CARD, REMOUNT ON LOG SCREEN", logCardText());
     else
-      snprintf(buf, sizeof buf, "3 S PRE-ROLL + 5 S POST-ROLL, DISARMS WHEN DONE");
+      snprintf(buf, sizeof buf, "%u.%u S PRE-ROLL + 5 S POST-ROLL, ENDS AT IDLE",
+               (unsigned)(gSet.preRollMs / 1000), (unsigned)((gSet.preRollMs % 1000) / 100));
   } else {
     snprintf(buf, sizeof buf, "%s", gSet.logMode == LOGMODE_CYCLE
                                       ? "LOG MODE CYCLE: THIS RUN WILL BE LOGGED"
@@ -279,6 +310,7 @@ int8_t testCycleHit(int16_t x, int16_t y) {
 }
 
 bool testCycleRepeatable(int8_t id) {
+  if (id < TH_N) return testHeaderRepeatable(id);
   if (id < TMC_BIG_M || id > TMC_BIG_P || running() || sSel == TILE_DIR) return false;
   return editorEnabled((uint8_t)(id - TMC_BIG_M));
 }
@@ -292,11 +324,12 @@ void testCycleSetPressed(int8_t id, bool pressed) {
 
 static void startLogTest() {
   if (escCycling())   { showToast("Stop the cycle first"); return; }
-  /* The test arms itself. Starting from disarmed also means a card mount
-   * (up to ~2 s of blocking with no card) can never happen while a motor is
-   * under manual throttle with STOP unresponsive. */
-  if (escArmed())     { showToast("Disarm first - the test arms itself"); return; }
   if (logRecording()) { showToast("Stop the current log first"); return; }
+  /* An already-live output is commanded to neutral before anything else, not
+   * refused: pressing START means start. Neutral first also means the card
+   * mount below (up to ~2 s of blocking with no card, during which STOP does
+   * not answer) can never happen with a motor under throttle. */
+  escNeutral();
   if (!logStartTest()) { showToast("Could not open a log - check SD"); return; }
   if (!escTestStart(gSet.profCycles)) {
     logStop("not started");
@@ -327,12 +360,14 @@ void testCycleDispatch(int8_t id) {
     uint8_t which = (uint8_t)(id - TMC_BIG_M);
     if (running()) { showToast("Stop the run to edit"); return; }
     if (!editorEnabled(which)) return;
-    uint16_t small, big;
+    uint32_t small, big;
     tileSteps(sSel, small, big);
-    int32_t mag = (which == 0 || which == 3) ? big : small;
+    int32_t mag = (int32_t)((which == 0 || which == 3) ? big : small);
     stepTile(sSel, which < 2 ? -mag : mag);
     drawTileN(sSel);
     drawValueBox();
+    /* Crossing 5 s changes which gear the buttons are in, so relabel them. */
+    for (uint8_t w = 0; w < 4; w++) drawEditorBtn(w, w == which);
     return;
   }
 

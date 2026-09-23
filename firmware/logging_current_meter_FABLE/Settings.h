@@ -44,13 +44,32 @@ enum ReleaseMode : uint8_t { RELEASE_HOLD = 0, RELEASE_DEADMAN = 1 };
 /* Profile limits and editor steps (small / big). */
 #define PROF_RAMP_MAX_MS    3000
 #define PROF_DWELL_MIN_MS    500
-#define PROF_DWELL_MAX_MS  15000
+/* Three minutes. Long dwells are how a motor gets held at load for a thermal
+ * run, so the cap is generous; the editor's steps grow with the value
+ * (see tileSteps in ScreenTestCycle.cpp) rather than making you tap 500 ms at
+ * a time to get there. */
+#define PROF_DWELL_MAX_MS 180000
+/* Above this the ms steps switch to their coarse pair. */
+#define PROF_MS_COARSE_ABOVE 5000
 #define PROF_CYCLES_MAX      999
 #define PROF_UNI_HIGH_DEF   1500
 #define PROF_BIDI_HIGH_DEF  1750
 
+/* Pre-roll: idle held after the output comes up, before a run's first ramp.
+ * Long enough that the ESC has finished its start-up (beeps, or music on some
+ * firmware) and will actually spin when the ramp begins. 5 s suits the ESCs on
+ * this bench; an ESC with a long startup tune wants more. */
+#define PRE_ROLL_DEF_MS     5000
+#define PRE_ROLL_MAX_MS    15000
+#define PRE_ROLL_STEP_MS     500
+
 struct Settings {
-  /* 12 bytes of uint8, then uint16s — no hidden padding (checked below). */
+  /* uint32 first, then 14 bytes of uint8, then uint16s — in that order the
+   * struct has no hidden padding on any alignment (checked below). */
+  uint32_t clockEpoch;     /* wall clock at the last save, local epoch secs  */
+  uint32_t profDwellHiMs, profDwellLoMs;  /* up to 3 min - 32 bits needed    */
+  uint8_t  clockEverSet;   /* 0 = clockEpoch has never held a real time      */
+  uint8_t  reserved0;      /* keeps the uint8 run even, no padding before u16 */
   uint8_t  theme;          /* ThemeId                                      */
   uint8_t  filterIndex;    /* index into FILTER_SAMPLES                    */
   uint8_t  logMode;        /* LogMode                                      */
@@ -64,15 +83,23 @@ struct Settings {
   uint8_t  testDir;        /* EscDir: FWD / REV / FWD+REV (BIDI only)      */
   uint8_t  testTab;        /* last Test Mode tab (0 manual, 1 cycle, 2 log) */
   uint16_t profLowUs, profHighUs;
-  uint16_t profRampUpMs, profDwellHiMs, profRampDnMs, profDwellLoMs;
+  uint16_t profRampUpMs, profRampDnMs;
   uint16_t profCycles;     /* Log Test cycle count                         */
+  uint16_t preRollMs;      /* idle before a run's first ramp               */
+  uint16_t reserved1;      /* the uint32 aligns the struct to 4 - this keeps
+                            * the size explicit rather than implied padding  */
 };
-static_assert(sizeof(Settings) == 26, "Settings has hidden padding - checksum/migration assume none");
+static_assert(sizeof(Settings) == 40, "Settings has hidden padding - checksum/migration assume none");
 
 extern Settings gSet;
 
 void settingsBegin();     /* load from flash, or defaults. Core 0, in setup */
 bool settingsSave();      /* write to flash. Core 0 only. true on success   */
+/* Persist only the wall clock: writes the blob as it was last saved, with
+ * clockEpoch refreshed from clockNow(). Used by the 5-minute idle save and
+ * the log boundaries, so those never quietly commit UI changes the operator
+ * has not pressed SAVE for. Refused while a log is recording, like save. */
+bool settingsSaveClock();
 bool settingsLoadedFromFlash();
 void settingsDefaults(Settings &s);
 

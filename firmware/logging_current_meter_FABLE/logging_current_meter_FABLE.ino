@@ -1,5 +1,5 @@
 /* ==========================================================================
- * logging_current_meter_FABLE.ino — v3.3 (2026-09-22)
+ * logging_current_meter_FABLE.ino — v3.5 (2026-09-23)
  *
  * Touchscreen UI for the Just 'Cuz Robotics Logging Current Meter (Rev A).
  * RP2040-Zero + 3.5" 480x320 ST7796/FT6336U on one FPC.
@@ -13,6 +13,7 @@
  *   Sampler.*     core-1 ADC, calibration maths, graph history ring
  *   Widgets.*     button chrome, cached fields, toast
  *   Settings.*    user settings and their flash persistence
+ *   Clock.*       wall clock for log timestamps (host unit-tested)
  *   EscOut.*      ESC output + motion engine (manual, ramped cycle, Log Test)
  *   EscProfile.h  pure cycle-profile maths (host unit-tested)
  *   Logger.*      SD CSV logging, triggers, USB CSV stream
@@ -44,6 +45,29 @@
  *
  * --------------------------------------------------------------------------
  * Version history
+ *   v3.5  2026-09-23  ESC handling on the bench. Every run — cycle or Log
+ *                     Test — starts with a pre-roll at idle, settable in
+ *                     Settings (ESC PRE-ROLL, 0-15 s, default 5 s), because an
+ *                     ESC ignores throttle until it has finished beeping and a
+ *                     run that began at once jerked into its first ramp.
+ *                     START now works with the output already live: it
+ *                     commands neutral and pre-rolls rather than refusing.
+ *                     The header button escalates ARM -> STOP (idle, signal
+ *                     still up, so the next run skips the ESC's start-up) ->
+ *                     CUT (output off); holding it for a second cuts from any
+ *                     state. A finished Log Test holds neutral instead of
+ *                     disarming, with a 30 s fuse that cuts it if the bench is
+ *                     left alone. Settings blob v5 (migrates v4/v3/v2/v1).
+ *   v3.4  2026-09-23  Wall clock, since the board has no RTC: epoch base plus
+ *                     millis(), set on Settings -> CLOCK -> SET CLOCK or over
+ *                     serial with `c` (epoch seconds, or a typed date; the
+ *                     laptop's capture_stream.py syncs it on connect). Saved
+ *                     into the settings blob at log boundaries, on SAVE, when
+ *                     set, and every 5 min while idle — never while a log
+ *                     records or the ESC is live. Logs gain a `# clock` header
+ *                     line and `stopped=` on the end line; the analyzer shows
+ *                     the start time and says when the clock may be behind.
+ *                     Settings blob v4.
  *   v3.3  2026-09-22  Test Mode rework. Three tabs — MANUAL, CYCLE, LOG TEST —
  *                     under one header with a STOP that cuts the output from
  *                     anywhere. ESC type UNI (arm/idle 1000 us) or BIDI
@@ -135,7 +159,7 @@
  *   t  re-initialise the touch controller (runs on core 1)
  *   L  toggle synthetic core-0 load (full-screen fill every loop)
  *   f  filter 0 <-> 20 samples
- *   e  ESC output arm (type-correct idle, 2 s hold) / disarm
+ *   e  ESC output arm (type-correct idle, 2 s hold) / cut
  *   p  print the ESC output state (set point, pulse on the pin)
  *   s  USB CSV stream on/off (not saved - use the LOG screen's SAVE)
  *   g  SD log start/stop
@@ -154,6 +178,7 @@
 #include "EscOut.h"
 #include "Logger.h"
 #include "Version.h"
+#include "Clock.h"
 
 JCR_ST7796 tft(PIN_LCD_CS, PIN_LCD_RS, PIN_LCD_RST, PIN_LCD_LED, LCD_IPS != 0);
 JCR_FT6336 touch(Wire1, PIN_CTP_SDA, PIN_CTP_SCL, PIN_CTP_RST, PIN_CTP_INT);
@@ -199,6 +224,7 @@ void loop1() {
 /* ============================ CORE 0 — the UI ============================ */
 static void telemetryTick();
 static void serialKeys();
+static void clockSaveTick();
 static int8_t   gPressedId     = -1;
 static ScreenId gPressedScreen = SCR_HOME;
 int16_t gDownX = 0, gDownY = 0;       /* last press, read by tap-to-jump */
@@ -284,6 +310,14 @@ static void serviceHeldTarget() {
     return;
   }
   if (gScreen != gPressedScreen || !touch.isDown()) return;
+  /* A finger that has wandered off the button stops repeating. Harmless for a
+   * stepper, but the Test Mode header's hold-to-CUT is destructive: sliding
+   * off it must not still cut the output a second later. */
+  {
+    JCRTouchPoint p;
+    touch.getTouch(p);
+    if (p.down && hitTestScreen(gScreen, p.x, p.y) != gPressedId) return;
+  }
   if (screenRepeatable(gScreen, gPressedId) && (int32_t)(millis() - gRepeatAtMs) >= 0) {
     gRepeatAtMs += HOLD_REPEAT_EVERY_MS;
     if ((int32_t)(millis() - gRepeatAtMs) > HOLD_REPEAT_EVERY_MS)   /* slow frame: don't burst */
@@ -358,7 +392,7 @@ void loop() {
      * does, and costs nothing. */
     Serial.println(F("# Logging Current Meter UI  " FW_VERSION));
     Serial.println(F("# built " __DATE__ " " __TIME__));
-    Serial.println(F("# keys: r stats | d telemetry | t touch reinit | L load | f filter | e esc arm | p esc | s stream | g log | m mount"));
+    Serial.println(F("# keys: r stats | d telemetry | t touch reinit | L load | f filter | e esc arm | p esc | s stream | g log | m mount | c clock"));
     Serial.printf("# touch: chip 0x%02X fw 0x%02X vendor 0x%02X %s\n",
                   touch.chipId(), touch.firmwareId(), touch.vendorId(),
                   touch.ok() ? "ok" : "INIT FAILED");
@@ -381,7 +415,8 @@ void loop() {
   escBarTick();           /* the armed strip, on whichever screen is up    */
   logTick();              /* drain samples: trigger, SD, USB stream        */
   if (escEv & ESC_EV_TEST_DONE) {
-    /* Log Test finished its post-roll (EscOut has already disarmed). Closed
+    /* Log Test finished its post-roll. The output is left live at neutral
+     * unless it was cut mid-run, with EscOut's fuse running. Closed
      * after logTick() so the post-roll's last samples are in the file. */
     if (logTestActive()) logStop(escTestAborted() ? "aborted" : "complete");
     if (gScreen == SCR_TEST_LOG || gScreen == SCR_TEST_CYCLE || gScreen == SCR_TEST_MANUAL)
@@ -402,7 +437,46 @@ void loop() {
   }
 
   telemetryTick();
+  clockSaveTick();
   serialKeys();
+}
+
+/* ---- keeping the clock across power cycles ----------------------------
+ * There is no RTC, so the only way the date survives a power cycle is a copy
+ * in flash. Every 5 minutes the current time is written into the settings
+ * blob — the clock fields only, never unsaved screen edits.
+ *
+ * An EEPROM commit stalls BOTH cores for a few milliseconds. That must never
+ * land inside a capture (a hole in the data) or while the ESC output is live
+ * (core 1 services the touch controller, so for those milliseconds the STOP
+ * button does not answer, with a motor spinning). This is the one place that
+ * knows about both, so every clock save in the firmware comes through here:
+ * screen APPLY, the serial command, and the logger all call clockSaveSoon(),
+ * which writes now if it is safe and otherwise leaves a request for the next
+ * idle pass. A failed write leaves the request standing too. */
+#define CLOCK_SAVE_MS (5UL * 60UL * 1000UL)
+
+bool clockSaveBlocked() {
+  return logRecording() || escArmed() || escTesting() || escCycling();
+}
+
+bool clockSaveSoon() {
+  if (!clockUsable()) return false;
+  if (clockSaveBlocked()) { clockSaveRequest(); return false; }
+  if (settingsSaveClock()) { clockSaveDone(); return true; }
+  clockSaveRequest();                 /* write failed - try again later    */
+  return false;
+}
+
+static void clockSaveTick() {
+  static uint32_t lastMs = 0;
+  uint32_t now = millis();
+  bool due = (now - lastMs >= CLOCK_SAVE_MS);
+  if (!due && !clockSavePending()) return;
+  if (!clockUsable()) { clockSaveDone(); return; }
+  if (clockSaveBlocked()) return;     /* checked again next pass           */
+  lastMs = now;
+  if (settingsSaveClock()) clockSaveDone();
 }
 
 /* ---- once-per-second telemetry --------------------------------------- */
@@ -444,8 +518,101 @@ static void telemetryTick() {
   gTickMaxResetReq = true;
 }
 
+/* ---- the clock command ------------------------------------------------
+ * Every other bench key acts on the keystroke, with no Enter needed. 'c'
+ * takes an argument, so it is the one that reads a line: after the 'c' the
+ * characters are collected until a newline, or for 2 s if the sender does not
+ * send one (the IDE's monitor can be set to "No line ending"), and then
+ * parsed. Collecting is non-blocking — loop() keeps running through it.
+ *
+ *   c                     print the time and how much to trust it
+ *   c 1790084323          local epoch seconds — what a script sends
+ *   c 2026-09-23 14:05:30 the same thing, typed by hand (seconds optional)
+ *
+ * The 2 s is an idle gap between characters, not a deadline for the whole
+ * command: typing a date by hand in a raw terminal takes longer than that.
+ * ---------------------------------------------------------------------- */
+static char     sClkLine[40];
+static uint8_t  sClkLen        = 0;
+static bool     sClkCollecting = false;
+static uint32_t sClkStartMs    = 0;
+
+static void clockReport(const char *what) {
+  char t[24];
+  clockFormat(t, sizeof t, clockNow());
+  Serial.printf("# [clock] %s %s (epoch %lu) state=%s\n", what, t,
+                (unsigned long)clockNow(), clockStateTag());
+}
+
+static void clockApply(uint32_t epoch) {
+  clockSet(epoch, true);
+  clockReport("set");
+  /* RAM now; flash at the next moment that is safe for a both-core stall. */
+  if (!clockSaveSoon())
+    Serial.println(F("# [clock] not in flash yet - a log or the ESC is busy; it goes in when idle"));
+}
+
+static void clockCommand(const char *arg) {
+  while (*arg == ' ' || *arg == '\t') arg++;
+  if (!*arg) {
+    clockReport("now");
+    if (clockState() == CLK_RESTORED)
+      Serial.println(F("# [clock] restored from flash - behind by however long the meter was off"));
+    else if (clockState() == CLK_UNSET)
+      Serial.println(F("# [clock] never set - logs will say so. Set with: c <epoch> or c YYYY-MM-DD HH:MM:SS"));
+    return;
+  }
+
+  CivilTime c;
+  int y, mo, d, h, mi, s = 0;
+  if (sscanf(arg, "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &s) >= 5) {
+    c.year = (int16_t)y; c.month = (uint8_t)mo; c.day = (uint8_t)d;
+    c.hour = (uint8_t)h; c.minute = (uint8_t)mi; c.second = (uint8_t)s;
+    if (y < CLOCK_YEAR_MIN || y > CLOCK_YEAR_MAX || mo < 1 || mo > 12 ||
+        d < 1 || d > clockDaysInMonth(c.year, c.month) ||
+        h > 23 || mi > 59 || s > 59 || h < 0 || mi < 0 || s < 0) {
+      Serial.println(F("# [clock] out of range - use c YYYY-MM-DD HH:MM:SS (2020-2099)"));
+      return;
+    }
+    clockApply(clockEpochFromCivil(c));
+    return;
+  }
+
+  char *end = nullptr;
+  unsigned long epoch = strtoul(arg, &end, 10);
+  if (end != arg && clockEpochPlausible((uint32_t)epoch)) {
+    clockApply((uint32_t)epoch);
+    return;
+  }
+  /* Out of 2020..2099 is almost always milliseconds sent as seconds, or a
+   * mistyped paste — refusing beats stamping year 2106 into every log. */
+  Serial.println(F("# [clock] unrecognised or out of range (2020-2099) - use c <epoch seconds> or c YYYY-MM-DD HH:MM:SS"));
+}
+
 /* ---- bench keys ------------------------------------------------------- */
 static void serialKeys() {
+  /* Mid-command: swallow the rest of the line before any key is read, so a
+   * date's digits can never be mistaken for bench keys. */
+  if (sClkCollecting) {
+    while (Serial.available()) {
+      char ch = (char)Serial.read();
+      if (ch == '\n' || ch == '\r') {
+        sClkLine[sClkLen] = 0;
+        sClkCollecting = false;
+        clockCommand(sClkLine);
+        return;
+      }
+      if (sClkLen < sizeof sClkLine - 1) sClkLine[sClkLen++] = ch;
+      sClkStartMs = millis();      /* idle gap, not total typing time       */
+    }
+    if (millis() - sClkStartMs > 2000) {
+      sClkLine[sClkLen] = 0;
+      sClkCollecting = false;
+      clockCommand(sClkLine);
+    }
+    return;
+  }
+
   if (!Serial.available()) return;
   char c = (char)Serial.read();
   switch (c) {
@@ -488,6 +655,9 @@ static void serialKeys() {
       if (escTesting()) Serial.println(F("# [log] a Log Test owns the log - STOP the test instead"));
       else if (logRecording()) logStop("serial");
       else if (!logStart()) Serial.println(F("# [log] start failed - see card status"));
+      break;
+    case 'c': case 'C':
+      sClkLen = 0; sClkCollecting = true; sClkStartMs = millis();
       break;
     case 'm': case 'M':
       if (logRecording()) Serial.println(F("# [log] stop the log before remounting"));

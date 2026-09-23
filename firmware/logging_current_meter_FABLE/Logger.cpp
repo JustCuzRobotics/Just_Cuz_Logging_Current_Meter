@@ -8,6 +8,7 @@
 #include "EscOut.h"
 #include "Format.h"
 #include "Version.h"
+#include "Clock.h"
 #include <SPI.h>
 #include <SdFat.h>
 #include <string.h>
@@ -243,7 +244,17 @@ static void writeHeader() {
          (unsigned)gSet.profRampDnMs, (unsigned)gSet.profDwellLoMs, (unsigned)gSet.profCycles,
          gSet.escType != ESC_TYPE_BIDI ? "FWD" :
            (gSet.testDir == ESC_DIR_REV ? "REV" : gSet.testDir == ESC_DIR_ALT ? "FWD+REV" : "FWD"),
-         (unsigned)ESC_TEST_PRE_MS, (unsigned)ESC_TEST_POST_MS);
+         (unsigned)gSet.preRollMs, (unsigned)ESC_TEST_POST_MS);
+  }
+  /* When the run happened. state= says how far to trust it: set = set this
+   * power-up, restored = the date is right but the time is behind by however
+   * long the meter was off, unset = no clock at all on this board yet. The
+   * analyzer parses this line. */
+  {
+    char when[24];
+    clockFormat(when, sizeof when, clockNow());
+    hcat(h, sizeof h, k, "# clock %s local  epoch=%lu  state=%s\n",
+                  when, (unsigned long)clockNow(), clockStateTag());
   }
   hcat(h, sizeof h, k, "# filter=%u samples (i_filt,v_filt only)  esc_frame=%u us  cal: V %s, I zero %s, I gain %s\n",
                 (unsigned)FILTER_SAMPLES[gSet.filterIndex], (unsigned)ESC_FRAME_US,
@@ -301,6 +312,11 @@ static bool openNewFile(bool allowMount, int16_t centivoltsAtStart, const char *
  * trigger record). */
 static bool beginLog(StartCause cause, int16_t centivoltsAtStart) {
   sCause = cause;
+  /* Ask for the clock to reach flash, so the date this run happened on
+   * survives a power cut. Only a request: an automatic start (a CURRENT
+   * trigger, or a cycle with the motor already turning) must not stall both
+   * cores here, so the sketch writes it at the next idle moment instead. */
+  clockSaveRequest();
   bool userStart = cause == CAUSE_MANUAL || cause == CAUSE_TEST;
   if (!openNewFile(userStart, centivoltsAtStart,
                    cause == CAUSE_TEST ? "TEST" : modeName(gSet.logMode))) {
@@ -369,10 +385,16 @@ void logStop(const char *reason) {
     char pk[16], pw[16];
     putCenti(pk, sizeof pk, sPeakI);
     putWatts(pw, sizeof pw, sPeakMw);
+    /* ISO-style with a T, not a space: every key on the end line is parsed as
+     * key=<no spaces>, here and in the analyzer, and a space would cut this
+     * value in half. The header's own clock line is free to use a space. */
+    char stopped[24];
+    clockFormat(stopped, sizeof stopped, clockNow());
+    stopped[10] = 'T';
     int k = snprintf(f, sizeof f,
-                     "# end reason=%s rows=%lu data_ms=%ld mah=%.2f wh=%.4f peak_i=%s peak_w=%s ring_drops=%lu buffer_drops=%lu\n",
+                     "# end reason=%s rows=%lu data_ms=%ld mah=%.2f wh=%.4f peak_i=%s peak_w=%s ring_drops=%lu buffer_drops=%lu stopped=%s\n",
                      reason, (unsigned long)sRows, (long)sLastRelMs, (double)sMahAcc, (double)sWhAcc,
-                     pk, pw, (unsigned long)ringDrops, (unsigned long)sBufDrops);
+                     pk, pw, (unsigned long)ringDrops, (unsigned long)sBufDrops, stopped);
     if (sBufLen + (size_t)k <= sizeof sBuf) { memcpy(sBuf + sBufLen, f, (size_t)k); sBufLen += (size_t)k; }
     bool ok = true;
     if (sBufLen) ok = sFile.write((const uint8_t *)sBuf, sBufLen) == sBufLen;
@@ -389,6 +411,12 @@ void logStop(const char *reason) {
   }
   if (gSet.logMode == LOGMODE_CURRENT) { sRearm = true; sBelowSinceMs = millis(); sAboveCount = 0; }
   updateState();
+  /* The file is closed, so this is the moment the clock most wants to be in
+   * flash — including a clock set from the screen or serial mid-capture,
+   * whose own save was deferred. clockSaveSoon() still declines if the ESC is
+   * live (a cycle that logs stops the log first and keeps driving), and the
+   * request it leaves is picked up as soon as the output goes quiet. */
+  clockSaveSoon();
 }
 
 /* Pack voltage for a manual/cycle file name: the newest drained sample, or

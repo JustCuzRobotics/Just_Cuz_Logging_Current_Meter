@@ -25,6 +25,10 @@ static uint16_t sManualUs  = ESC_UNI_IDLE_US;
 static EscProfile sRun;                 /* snapshot at run start            */
 static uint8_t  sRunType   = ESC_TYPE_UNI;
 static uint8_t  sRunDir    = ESC_DIR_FWD;
+/* When a run ends the output stays live at neutral so the next one starts
+ * instantly. This is the fuse that cuts it if nothing then happens. 0 = no
+ * fuse running (manual work, or already cut). */
+static uint32_t sCutAtMs   = 0;
 
 /* ---- helpers ---------------------------------------------------------- */
 
@@ -84,6 +88,7 @@ static void enterPhase(EscPhase p) {
 }
 
 static void snapshotProfile() {
+  sRun.preMs     = gSet.preRollMs;
   sRun.lowUs     = gSet.profLowUs;
   sRun.highUs    = gSet.profHighUs;
   sRun.rampUpMs  = gSet.profRampUpMs;
@@ -94,16 +99,19 @@ static void snapshotProfile() {
   sRunDir  = gSet.testDir;
 }
 
+/* First cycle of a run. Called from the tick when the pre-roll ends, so the
+ * phase start is fixed up by the caller's schedule bookkeeping. */
 static void startCycle0() {
   sCycleIdx = 0;
   sReverse = profileCycleReverse(sRunDir, 0);
-  enterPhase(PH_RAMP_UP);
+  sPhase = PH_RAMP_UP;
 }
 
 /* ---- lifecycle -------------------------------------------------------- */
 
 void escBegin() {
   sArmed = sHolding = sTest = sAborted = false;
+  sCutAtMs = 0;
   sPhase = PH_OFF;
   sManualUs = escIdleUs();                /* never boot anywhere but idle    */
   pinLow();
@@ -112,17 +120,18 @@ void escBegin() {
 /* ---- arming ----------------------------------------------------------- */
 
 void escArm(bool on) {
-  if (on) {
-    if (sArmed) return;
-    if (sTest) return;                    /* no re-arm into a test's post-roll */
-    if (!outputOn()) return;
-    sManualUs = escIdleUs();              /* set point resets to idle        */
-    if (sPhase == PH_OFF) enterPhase(PH_MANUAL);
-    return;
-  }
-  /* Header STOP: output off now, whatever is running. */
-  bool wasArmed = sArmed;
+  if (!on) { escCut(); return; }
+  if (sArmed) { sCutAtMs = 0; return; }   /* already live: just cancel the fuse */
+  if (sTest) return;                      /* no re-arm into a test's post-roll */
+  if (!outputOn()) return;
+  sManualUs = escIdleUs();                /* set point resets to idle        */
+  sCutAtMs = 0;
+  if (sPhase == PH_OFF) enterPhase(PH_MANUAL);
+}
+
+void escCut() {
   outputOff();
+  sCutAtMs = 0;
   if (sTest && sPhase != PH_POST) {
     /* Keep the log going through an unpowered post-roll. */
     sAborted = true;
@@ -130,7 +139,50 @@ void escArm(bool on) {
   } else if (!sTest) {
     enterPhase(PH_OFF);
   }
-  (void)wasArmed;
+}
+
+/* millis() + a timeout can legally land on 0, which is also "no fuse", so it
+ * is nudged by a millisecond. */
+static void armFuse(uint32_t ms) {
+  sCutAtMs = millis() + ms;
+  if (!sCutAtMs) sCutAtMs = 1;
+}
+
+/* Stop whatever is happening but leave the signal up at idle/neutral. The
+ * motor stops immediately — the idle pulse is pushed out here rather than
+ * waiting for the next escTick(), because a caller may block for a long time
+ * straight afterwards (opening a log can mount a card, which takes seconds).
+ *
+ * Returns false when there is nothing it can do: with the output already off,
+ * or during a test's post-roll, where the only remaining escalation is a cut.
+ * The header button relies on that to fall through to escCut(). */
+bool escNeutral() {
+  if (!sArmed) return false;
+  if (sTest) {
+    if (sPhase == PH_POST) return false;
+    escTestAbort();
+    setLevel(escIdleUs());
+    return true;
+  }
+  if (escCycling()) { escCycleStop(); return true; }
+  sManualUs = escIdleUs();
+  if (sPhase != PH_MANUAL) enterPhase(PH_MANUAL);
+  setLevel(escIdleUs());
+  /* A stop the operator asked for by hand leaves the output live, because
+   * that is the point — but not forever: a much longer fuse than the one a
+   * finished run gets still catches a bench that is simply walked away from. */
+  armFuse(ESC_IDLE_CUT_MANUAL_MS);
+  return true;
+}
+
+bool escAtNeutral() {
+  return sArmed && !sTest && !escCycling() && gEscOutUs == escIdleUs();
+}
+
+uint32_t escCutRemainMs() {
+  if (!sArmed || !sCutAtMs) return 0;
+  int32_t r = (int32_t)(sCutAtMs - millis());
+  return r > 0 ? (uint32_t)r : 0;
 }
 
 bool escArmed()   { return sArmed; }
@@ -144,33 +196,47 @@ uint32_t escHoldRemainMs() {
 
 /* ---- manual ----------------------------------------------------------- */
 
+/* Touching the throttle is the operator being present, so it cancels the
+ * post-run fuse. */
 void escManualSet(uint16_t us) {
   sManualUs = clampUs(us);
+  sCutAtMs = 0;
 }
 void escManualIdle() { sManualUs = escIdleUs(); }
 uint16_t escManualUs() { return sManualUs; }
 
 /* ---- cycle / test ----------------------------------------------------- */
 
+/* Starting a cycle works whether the output is already live or not: an armed
+ * ESC is simply commanded to idle for the pre-roll rather than being refused,
+ * which is what the operator meant by pressing START. */
 bool escCycleStart() {
   if (sTest) return false;
   if (!sArmed && !outputOn()) return false;
   snapshotProfile();
   sAborted = false;
   sCycleTarget = 0;
-  if (sHolding) enterPhase(PH_ARMING);
-  else          startCycle0();
+  sCutAtMs = 0;
+  sManualUs = escIdleUs();                /* the pre-roll sits at idle      */
+  enterPhase(PH_PRE);
+  setLevel(escIdleUs());                  /* now: START means stop moving   */
   return true;
 }
 
 void escCycleStop() {
   if (sTest) return;
   sManualUs = escIdleUs();
-  enterPhase(sArmed ? PH_MANUAL : PH_OFF);
+  if (sArmed) {
+    enterPhase(PH_MANUAL);
+    setLevel(escIdleUs());           /* now, not at the next tick           */
+    armFuse(ESC_IDLE_CUT_MS);
+  } else {
+    enterPhase(PH_OFF);
+  }
 }
 
 bool escCycling() {
-  return !sTest && (sPhase == PH_ARMING || sPhase == PH_RAMP_UP || sPhase == PH_DWELL_HI ||
+  return !sTest && (sPhase == PH_PRE || sPhase == PH_RAMP_UP || sPhase == PH_DWELL_HI ||
                     sPhase == PH_RAMP_DN || sPhase == PH_DWELL_LO);
 }
 
@@ -182,8 +248,10 @@ bool escTestStart(uint16_t cycles) {
   sAborted = false;
   sCycleTarget = cycles;
   sCycleIdx = 0;
+  sCutAtMs = 0;
   sManualUs = escIdleUs();
   enterPhase(PH_PRE);                      /* the 2 s hold runs inside it     */
+  setLevel(escIdleUs());                   /* before the caller opens a log   */
   return true;
 }
 
@@ -202,9 +270,13 @@ uint8_t escTick() {
   uint8_t ev = 0;
   uint32_t now = millis();
 
-  if (sHolding && (int32_t)(now - sHoldEndMs) >= 0) {
-    sHolding = false;
-    if (sPhase == PH_ARMING) startCycle0();
+  if (sHolding && (int32_t)(now - sHoldEndMs) >= 0) sHolding = false;
+
+  /* The live-at-neutral fuse. Anything the operator does cancels it; only
+   * being left alone lets it run out. */
+  if (sArmed && sCutAtMs && (int32_t)(now - sCutAtMs) >= 0) {
+    escCut();
+    return ev;
   }
 
   /* Advance timed phases. The loop handles 0 ms ramps (several transitions in
@@ -221,8 +293,7 @@ uint8_t escTick() {
     uint32_t next = (el - len > 50) ? now : sPhaseStartMs + len;
 
     switch (sPhase) {
-      case PH_PRE:      sPhase = PH_RAMP_UP; sCycleIdx = 0;
-                        sReverse = profileCycleReverse(sRunDir, 0); break;
+      case PH_PRE:      startCycle0(); break;
       case PH_RAMP_UP:  sPhase = PH_DWELL_HI; break;
       case PH_DWELL_HI: sPhase = PH_RAMP_DN;  break;
       case PH_RAMP_DN:  sPhase = PH_DWELL_LO; break;
@@ -236,16 +307,24 @@ uint8_t escTick() {
         }
         break;
       case PH_POST:
-        /* Test complete: output off, report, back to OFF. */
-        outputOff();
+        /* Test complete. If the output is still live it stays live, at
+         * neutral, so a second test can start straight away — with the fuse
+         * running in case nobody does. A test that was cut mid-run is already
+         * off and stays off. */
         sTest = false;
-        sPhase = PH_OFF;
+        if (sArmed) {
+          sManualUs = escIdleUs();
+          sPhase = PH_MANUAL;
+          armFuse(ESC_IDLE_CUT_MS);
+        } else {
+          sPhase = PH_OFF;
+        }
         ev |= ESC_EV_TEST_DONE;
         break;
       default: break;
     }
     sPhaseStartMs = next;
-    if (sPhase == PH_OFF) break;
+    if (sPhase == PH_OFF || sPhase == PH_MANUAL) break;
   }
 
   /* Drive the pin. */
@@ -266,7 +345,6 @@ uint8_t escTick() {
 EscPhase escPhase() { return sPhase; }
 
 uint32_t escPhaseRemainMs() {
-  if (sPhase == PH_ARMING) return escHoldRemainMs();
   if (sPhase < PH_PRE) return 0;
   uint32_t len = profilePhaseMs(sPhase, sRun);
   uint32_t el = millis() - sPhaseStartMs;
@@ -288,7 +366,6 @@ const char *escPhaseName(EscPhase p) {
   switch (p) {
     case PH_OFF:      return "OFF";
     case PH_MANUAL:   return "MANUAL";
-    case PH_ARMING:   return "ARMING";
     case PH_PRE:      return "PRE-ROLL";
     case PH_RAMP_UP:  return "RAMP UP";
     case PH_DWELL_HI: return "DWELL HI";

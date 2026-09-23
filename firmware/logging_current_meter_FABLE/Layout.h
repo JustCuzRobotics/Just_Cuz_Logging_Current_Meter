@@ -170,27 +170,66 @@ inline const JCRRect TMC_VALUE_BOX = { 144, 170, 192, 40 };
  * A label column on the left, controls in a fixed column on the right, one
  * row per setting. New settings drop in as another row without disturbing
  * anything above them, which is the point of laying it out this way. */
-inline const JCRRect SET_FILTER_BOX = {302, 102, 120, 40};
-inline const int16_t SET_ROW_Y[5]   = { 50, 102, 154, 206, 258 };
-inline const char *const SET_ROW_LABEL[5] = { "THEME", "FILTER", "CALIBRATION",
-                                              "SETTINGS", "DIAGNOSTICS" };
-inline const char *const SET_ROW_SUB[5]   = { "PANEL PALETTE",
-                                              "V+I SMOOTHING WINDOW",
-                                              "DUMP CONSTANTS OVER SERIAL",
-                                              "WRITE CURRENT VALUES TO FLASH",
-                                              "TOUCH + FPS DEBUG SCREEN" };
+/* Six rows at a 44 px pitch (it was five at 52 before the clock row). Label
+ * on the baseline, description under it, divider 38 px down, control 36 px
+ * tall in the right-hand column. */
+#define SET_ROW_N 6
+inline const JCRRect SET_FILTER_BOX = {302,  96, 120, 36};
+inline const JCRRect SET_PRE_BOX    = {302, 184, 120, 36};
+inline const int16_t SET_ROW_Y[SET_ROW_N] = { 50, 94, 138, 182, 226, 270 };
+inline const char *const SET_ROW_LABEL[SET_ROW_N] = { "THEME", "FILTER", "CLOCK",
+                                                      "ESC PRE-ROLL", "SETTINGS",
+                                                      "TOOLS" };
+/* Rows 1, 2 and 3 write their own description line every tick. The last row
+ * carries two buttons, which is what keeps this to six rows. */
+inline const char *const SET_ROW_SUB[SET_ROW_N]   = { "PANEL PALETTE",
+                                                      "V+I SMOOTHING WINDOW",
+                                                      "DATE + TIME FOR LOG FILES",
+                                                      "IDLE BEFORE A RUN",
+                                                      "WRITE CURRENT VALUES TO FLASH",
+                                                      "CALIBRATION DUMP + TOUCH DEBUG" };
 
-enum { SET_BACK, SET_THEME, SET_FILTER_M, SET_FILTER_P,
-       SET_DUMP, SET_SAVE, SET_DEV, SET_BTN_N };
+enum { SET_BACK, SET_THEME, SET_FILTER_M, SET_FILTER_P, SET_CLOCK,
+       SET_PRE_M, SET_PRE_P, SET_SAVE, SET_DUMP, SET_DEV, SET_BTN_N };
 inline const Target SET_T[SET_BTN_N] = {
   { {  8,   8,  52, 30}, {  0,   0,  96, 44} },   /* Back                    */
-  { {300,  50, 168, 40}, {240,  44, 240, 52} },   /* theme toggle            */
-  { {252, 102,  44, 40}, {240,  96,  52, 52} },   /* filter -                */
-  { {426, 102,  42, 40}, {422,  96,  58, 52} },   /* filter +                */
-  { {252, 154, 216, 40}, {240, 148, 240, 52} },   /* dump calibration        */
-  { {252, 206, 216, 40}, {240, 200, 240, 52} },   /* save settings           */
-  { {252, 258, 216, 40}, {240, 252, 240, 68} },   /* dev mode                */
+  { {300,  52, 168, 36}, {240,  48, 240, 42} },   /* theme toggle            */
+  { {252,  96,  44, 36}, {240,  92,  64, 42} },   /* filter -                */
+  { {426,  96,  42, 36}, {422,  92,  58, 42} },   /* filter +                */
+  { {252, 140, 216, 36}, {240, 136, 240, 42} },   /* set clock               */
+  { {252, 184,  44, 36}, {240, 180,  64, 42} },   /* pre-roll -              */
+  { {426, 184,  42, 36}, {422, 180,  58, 42} },   /* pre-roll +              */
+  { {252, 228, 216, 36}, {240, 224, 240, 42} },   /* save settings           */
+  { {252, 272, 104, 36}, {240, 268, 118, 44} },   /* dump calibration        */
+  { {364, 272, 104, 36}, {358, 268, 122, 44} },   /* dev mode                */
 };
+
+/* ---------------------------------------------------------------- CLOCK --
+ * SET CLOCK, reached from the Settings clock row. Five fields as tiles, the
+ * same editor row as the Test Mode profile, then the working value big and
+ * the live clock underneath it. Nothing moves until APPLY. */
+enum { CLK_BACK, CLK_TILE0, CLK_TILE1, CLK_TILE2, CLK_TILE3, CLK_TILE4,
+       CLK_BIG_M, CLK_SMALL_M, CLK_SMALL_P, CLK_BIG_P, CLK_APPLY, CLK_BTN_N };
+enum { CFLD_YEAR, CFLD_MONTH, CFLD_DAY, CFLD_HOUR, CFLD_MIN, CFLD_N };
+inline const Target CLK_T[CLK_BTN_N] = {
+  { {  8,   8,  52, 30}, {  0,   0,  96, 44} },   /* Back (cancels)          */
+  { {  8,  58,  88, 54}, {  6,  52,  92, 62} },   /* YEAR                    */
+  { {102,  58,  88, 54}, {100,  52,  92, 62} },   /* MONTH                   */
+  { {196,  58,  88, 54}, {194,  52,  92, 62} },   /* DAY                     */
+  { {290,  58,  88, 54}, {288,  52,  92, 62} },   /* HOUR                    */
+  { {384,  58,  88, 54}, {382,  52,  92, 62} },   /* MIN                     */
+  { {  8, 124,  84, 44}, {  6, 120,  88, 52} },   /* big -                   */
+  { {100, 124,  84, 44}, {  98, 120,  88, 52} },  /* small -                 */
+  { {296, 124,  84, 44}, {294, 120,  88, 52} },   /* small +                 */
+  { {388, 124,  84, 44}, {386, 120,  88, 52} },   /* big +                   */
+  { {252, 262, 220, 46}, {240, 256, 240, 58} },   /* APPLY                   */
+};
+inline const JCRRect CLK_VALUE_BOX = { 192, 124,  96, 44};
+#define CLK_BIG_Y     186      /* working value, RUSSO22, centred           */
+#define CLK_STAT_X      8
+#define CLK_STAT_Y1   224      /* live clock, 5x7 x1                        */
+#define CLK_STAT_Y2   240      /* what APPLY will do                        */
+#define CLK_STAT_CHARS 72      /* 432 px of 5x7 x1                          */
 
 /* ------------------------------------------------------------------ LOG --
  * Same two-column grid as Test Mode's cycle rows. Top: four steppers (mode,

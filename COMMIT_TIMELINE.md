@@ -8,6 +8,126 @@ notes with light editing.
 
 <!-- Newest entries go directly below this line. -->
 
+## v3.5 — 2026-09-23
+
+### firmware: v3.5 — ESC pre-roll, and stopping without disarming
+
+**Why:** the first bench run of v3.3 found three things. An ESC beeps for about four seconds
+after the signal comes up before it will spin, so a cycle that began at once ate the start of
+its own first ramp and the motor jerked. Pressing START with the output already live did
+nothing on the LOG TEST tab (it refused, asking to be disarmed first). And stopping meant
+cutting the signal, so every restart paid the ESC's start-up again — worse on ESCs with
+start-up music. Decisions taken with Seth: the pre-roll is a Settings value, not a constant,
+because start-up time is a property of the ESC; a tap stops the motor but keeps the signal,
+with a hold to cut; a finished Log Test stays live at idle with a fuse behind it.
+
+**Changes**
+
+- `EscProfile.h` — `PH_ARMING` is gone: `PH_PRE` is now the pre-roll before **every** run,
+  cycle or Log Test, and its length is `EscProfile.preMs`, snapshotted at start like the rest
+  of the profile.
+- `Settings.h/.cpp` — blob v5 (36 B, `static_assert`ed) adds `preRollMs` (0–15000 ms, default
+  5000, 500 ms steps) and an explicit `reserved1` so the size is stated rather than implied by
+  the uint32's alignment. v4, v3, v2 and v1 blobs migrate.
+- `EscOut.h/.cpp` — stopping is now two levels. `escNeutral()` stops a run or a throttle and
+  leaves the signal up at idle (synchronously: the idle pulse is written there and then, since
+  a caller may block for seconds opening a log). `escCut()` is the old hard stop. A run that
+  ends on its own leaves the output live at idle with a 30 s fuse; a stop asked for by hand
+  gets a 5 minute one; touching the throttle or starting anything cancels it. `escCycleStart()`
+  works with the output already live — it commands idle and pre-rolls instead of refusing —
+  and the Log Test end holds neutral instead of disarming.
+- `ScreenTestCommon.cpp` — the header button reads ARM / STOP / CUT and escalates. Hold-to-cut
+  reuses the press-and-hold repeat, but only for a press that started on STOP, so holding ARM
+  can no longer arm the ESC and cut it a second later.
+- `logging_current_meter_FABLE.ino` — a held button that the finger has slid off no longer
+  repeats (`serviceHeldTarget()` re-runs the hit test), which matters now that a repeat can
+  cut the output.
+- `ScreenTestCycle.cpp` — START LOG TEST commands neutral instead of refusing when armed, so
+  the card mount can never block with a motor under throttle; the tab's idle line states the
+  real pre-roll and that the output ends live at idle.
+- `Layout.h` / `ScreenSettings.cpp` — a sixth Settings row, ESC PRE-ROLL, with ± steppers and
+  hold-to-repeat; DUMP and DEV MODE share the last row to make space.
+- **Dwells now run to 3 minutes** (`PROF_DWELL_MAX_MS` 180000, up from 15000), for holding a
+  motor at load long enough to get thermal data. That needs 32 bits, so `profDwellHiMs` /
+  `profDwellLoMs` moved to `uint32_t` in both `Settings` (blob **v6**, 40 B, migrating v5) and
+  `EscProfile` — whose field ORDER is now documented as part of its interface, because the host
+  tests build profiles with aggregate initialisers. The cycle editor reads and writes tiles
+  through `tileGet()` / `tilePut()` on a common `uint32_t` rather than a `uint16_t*`, and
+  millisecond tiles change gear with their value: 50/500 ms below 5 s, 1 s/10 s above it, with
+  the buttons relabelling themselves (`+1 S`, `+10 S`) as the threshold is crossed.
+
+**Verification:** compile clean, zero warnings (154.0 KB). Engine host tests extended: the
+pre-roll length comes from the profile, a cycle started while armed drops to idle immediately
+and does not re-arm, neutral is synchronous, neutral declines during a post-roll (so the
+button falls through to a cut), a hand stop leaves the long fuse, throttle cancels it, and the
+30 s fuse cuts a finished test. The clock harness covers the v5→v6 migration, a 3-minute dwell
+through a save/load round trip, and a dwell past the cap rejecting the blob. Independent review
+found eight issues, all fixed — the worst were neutral not reaching the pin before a blocking
+card mount, and a dead header button during a powered post-roll.
+
+**Open:** not bench-tested. Seth to check the 5 s pre-roll against his ESC's beeps, START from
+armed, hold-to-cut, and that a finished test ends quiet.
+
+## v3.4 — 2026-09-23
+
+### firmware: v3.4 — a settable wall clock, stamped into every log
+
+**Why:** logs carried `t_ms` from log start and a file counter, and nothing said when a run
+happened; comparing a week of pulls meant remembering which file was which day. The board has
+no RTC and no backup cell, so this is a software clock: an epoch base plus `millis()`, set
+from the screen or from the laptop, and copied into flash often enough that a power cycle
+comes back knowing the date. Decisions taken with Seth: save every 5 minutes while idle; date
+and time in the CSV metadata only, not in file names; a serial command accepting both epoch
+seconds and a typed date; and its own SET CLOCK screen rather than a cramped Settings row.
+
+**Changes**
+
+- `Clock.h/.cpp` — new. Hinnant civil-from-days date maths (no tables, no loops, exact),
+  `clockNow()` = base + elapsed with the base carried forward before the 49.7-day `millis()`
+  wrap (otherwise the clock would jump backwards seven weeks and then be saved), state
+  UNSET / RESTORED / SET, and a plausibility window of 2020–2099 applied on load, on the
+  screen and over serial.
+- `Settings.h/.cpp` — blob v4 (32 bytes, `static_assert`ed): `clockEpoch` and `clockEverSet`
+  ahead of the existing fields so the 4-byte value cannot introduce padding. v3, v2 and v1
+  blobs migrate. `settingsSaveClock()` writes the **last saved** blob with only the clock
+  refreshed, from a `s_flashCopy` kept at load and save time, so a periodic clock save can
+  never commit screen edits nobody pressed SAVE for.
+- `ScreenClock.cpp`, `Layout.h`, `Screens.*` — new SET CLOCK screen: YEAR / MONTH / DAY /
+  HOUR / MIN tiles, the Test Mode editor row (±1 / ±10, big steps in lime, hold to repeat),
+  APPLY. Fields wrap; day is clamped to the month, leap years included. The working copy is
+  seeded on entry only, because a toast expiring repaints the screen and would otherwise wipe
+  an edit in progress. Settings goes to six rows at a 44 px pitch for the CLOCK row, which
+  shows the time and how far to trust it.
+- `logging_current_meter_FABLE.ino` — serial `c`: the one bench key that takes an argument,
+  so it collects a line (newline, or a 2 s gap between characters — typing a date by hand
+  takes longer than 2 s from the first keystroke). `clockSaveBlocked()` / `clockSaveSoon()` /
+  `clockSaveTick()` own the save policy: an EEPROM commit stalls both cores, so nothing
+  writes flash while a log records or the ESC is live, and a save asked for then is written
+  at the next idle pass.
+- `Logger.cpp` — `# clock <time> local epoch=… state=…` header line and `stopped=<ISO>` on
+  the `# end` line (a `T`, not a space, so the key=value parse survives). Log start and stop
+  request a clock save rather than committing inside the capture path.
+- `tools/log_analyzer.py` — parses the clock line; the stats box shows `Started:` with a
+  "clock restored - may be behind" note when the time is not trustworthy, and the summary CSV
+  carries started/stopped and the clock state. Older logs are unaffected.
+- `tools/capture_stream.py` — sends `c <epoch>` on connect (`--no-set-clock` to skip), so a
+  session with the laptop attached is stamped to the second.
+
+**Verification:** compile clean for `waveshare_rp2040_zero`, zero warnings (152.6 KB).
+New host test (`hosttest/clock`): epoch↔civil against `gmtime_r` every 6 h from 2020 to 2100,
+leap years and month lengths, formatting, the `millis()` wrap over 60 simulated days,
+sub-second truncation, the 2020–2099 window, blob v4 round-trip, v3→v4 migration, a rotted
+stored epoch rejected, and the clock-only save leaving unsaved screen edits out of flash.
+Logger harness confirms the header line and `stopped=`; engine tests still pass. Layout
+previews rendered for SETTINGS and SET CLOCK with the hit-rect overlap check (which also
+found a pre-existing filter-minus hit rect that did not cover its button, now fixed).
+Reviewed by an independent pass; seven findings fixed — EEPROM commits inside the capture
+path, the toast-repaint wiping an edit, the missing ESC guard, the 49.7-day wrap, the missing
+upper bound on the epoch, the line-collector timeout, and a truncated toast.
+
+**Open:** not bench-tested. Seth to check a power cycle restores the date, that a serial sync
+lands to the second, and that no save ever lands mid-capture.
+
 ## v3.3 — 2026-09-22
 
 ### JCR_TouchScreen 1.2.0: lastGoodSampleMicros() for fail-safe held controls

@@ -3,7 +3,7 @@
 | Sketch | Purpose |
 |---|---|
 | `display_bringup/` | Full board diagnostic and calibration tool. Exercises all 20 usable GPIO, reports pass/fail per subsystem with net names, and fits the analog calibration constants |
-| `logging_current_meter_FABLE/` | **The current UI (v3.3).** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, Test Mode (manual / ramped cycle / logged cycle test, one-direction or bidirectional ESCs), **SD logging with manual / cycle / current-threshold start and a USB CSV stream**, Settings with flash persistence, two themes, tunable V/I filter, touch diagnostics with a serial telemetry harness. One module per concern; built on `libraries/JCR_TouchScreen/` |
+| `logging_current_meter_FABLE/` | **The current UI (v3.5).** Live V/I/T/W, energy and run timer, autoscaled 5 s graph, Test Mode (manual / ramped cycle / logged cycle test, one-direction or bidirectional ESCs), **SD logging with manual / cycle / current-threshold start and a USB CSV stream**, Settings with flash persistence, a settable wall clock that stamps logs, two themes, tunable V/I filter, touch diagnostics with a serial telemetry harness. One module per concern; built on `libraries/JCR_TouchScreen/` |
 | `FABLE_DEV_TEST_SCREEN/` | Minimal touch-reliability test firmware. The quickest way to prove a panel and its touch mapping in isolation |
 | `logging_current_meter_ui/` | Superseded predecessor (v1.7, Arduino_GFX). Kept as a reference until the new UI is bench-verified |
 | `touch_dev_test/` | Earlier touch experiment. Superseded; not a reference |
@@ -173,7 +173,8 @@ routines (Settings → DUMP prints the current ones over serial). `Layout.h` hol
 pixel coordinate and touch target, so retargeting to another panel size is one file.
 `Sampler.*` is the core-1 ADC, the V/I weighted-moving-average filter and the graph ring;
 `Settings.*` the user settings and their EEPROM persistence (explicit Save only — a flash
-write halts both cores for a few ms); `EscOut.*` the ESC output and motion engine on GP1 (the
+write halts both cores for a few ms); `Clock.*` the wall clock and its date maths
+(unit-tested on the host), `ScreenClock.cpp` the SET CLOCK screen; `EscOut.*` the ESC output and motion engine on GP1 (the
 core's Servo library — PIO, `writeMicroseconds()`, fixed 50 Hz — OFF at boot, always arms at
 idle with a 2 s hold; manual, ramped cycle and Log Test phases), `EscProfile.h` the pure
 profile maths (unit-tested on the host), `ScreenTest*.cpp` the three Test Mode tabs; `Logger.*` the SD
@@ -191,11 +192,12 @@ two palettes behind the `COL_*` macros; `Widgets.*` the button chrome and cached
 | `t` | re-initialise the touch controller from core 1 |
 | `L` | synthetic ~60 ms core-0 load per loop |
 | `f` | filter 0 ↔ 20 samples |
-| `e` | ESC output arm (idle 1000 µs, 2 s hold) / disarm, then prints the ESC state |
+| `e` | ESC output arm (idle 1000 µs, 2 s hold) / cut, then prints the ESC state |
 | `p` | print the ESC state — attached, set point, pulse on the pin, hold/cycle |
 | `s` | USB CSV stream on/off (not saved — the LOG screen's SAVE persists it) |
 | `g` | SD log start / stop |
 | `m` | remount the SD card (runs the read-back test) |
+| `c` | the wall clock. `c` alone prints it; `c 1790084323` sets it from epoch seconds; `c 2026-09-23 14:05:30` sets it from a typed date. This is the only key that takes an argument, so it reads to the end of the line (or a 2 s gap between characters) |
 
 **Every serial line that is not a CSV data row starts with `#`** as of v3.2, so a capture
 can separate data from the banner, `[tp]` telemetry and `[log]` events by the first
@@ -223,12 +225,34 @@ Arming now always emits 1000 µs for 2 s before the set point or a cycle applies
 set point resets to idle on arm. ESCs refuse to arm when their first frames carry
 throttle.
 
-### Test Mode (v3.3)
+### Test Mode (v3.3, arming reworked in v3.5)
 
-Three tabs under one header: **MANUAL | CYCLE | LOG TEST**, with **ARM** / **STOP** at top
-right. STOP cuts the output from any tab, in any state (at most one more idle pulse, within
-a 20 ms frame). Leaving Test Mode does not stop a running cycle — the amber strip says the
-output is live.
+Three tabs under one header: **MANUAL | CYCLE | LOG TEST**, with the arm/stop button at top
+right. Leaving Test Mode does not stop a running cycle — the amber strip says the output is
+live.
+
+**The arm/stop button escalates** (v3.5), because "stop the motor" and "make the pin dead"
+are different needs and an ESC charges several seconds of start-up for the second one:
+
+| face | tap does | when |
+|---|---|---|
+| **ARM** | signal up at idle, 2 s hold | output off |
+| **STOP** | idle now, signal still up — the motor stops, the ESC stays armed | something is moving |
+| **CUT** | output off (at most one more idle pulse, within a 20 ms frame) | already at idle, nothing running |
+
+Holding the button for a second cuts from a press that started on STOP. A press that started
+on ARM never repeats, and sliding a finger off the button cancels the hold.
+
+Whenever the output sits live at idle with nothing running, a fuse cuts it on its own: 30 s
+after a run ended by itself, 5 minutes after a stop you asked for. Touching the throttle or
+starting anything cancels it, and the MANUAL status line counts the 30 s one down.
+
+**Pre-roll** (v3.5): every run — cycle or Log Test — starts with the output at idle for
+**ESC PRE-ROLL** (Settings, 0–15 s, default 5 s) before the first ramp, with the 2 s arming
+hold inside it. An ESC ignores throttle until it has finished its start-up beeps, so without
+this the first ramp is half eaten and the motor jerks. Set it longer for an ESC with start-up
+music. START also works with the output already live: it commands idle and pre-rolls, rather
+than making you stop first.
 
 - **ESC type** (MANUAL tab, locked while armed; an arrow icon, one head or two):
   **ONE DIRECTION** arms and idles at 1000 µs; **BIDIRECTIONAL** arms at 1500 µs neutral,
@@ -249,24 +273,59 @@ output is live.
 | LOW US (UNI only; BIDI low = 1500) | 1000 – high−10 | 10 / 50 |
 | HIGH US (BIDI: forward pulse, reverse mirrors it about 1500) | UNI low+10 – 2000, BIDI 1510 – 2000 | 10 / 50 |
 | RAMP UP / RAMP DOWN ms | 0 – 3000 (0 = instant step) | 50 / 500 |
-| DWELL HI / DWELL LO ms | 500 – 15000 | 50 / 500 |
+| DWELL HI / DWELL LO ms | 500 – 180000 (3 min) | 50 / 500 below 5 s, **1 s / 10 s above** |
 | DIRECTION (BIDI only) | FWD / REV / FWD+REV (alternates each cycle) | ◀ ▶ |
 | CYCLES (LOG TEST only) | 1 – 999 | 1 / 10 |
+
+  Millisecond tiles change gear with their own value: a 3-minute dwell set 500 ms at a time
+  would be 360 taps, so above 5 s the buttons become 1 s and 10 s and relabel themselves
+  (`+1 S`, `+10 S`) as you cross the threshold. Dwells are stored as 32-bit values for this.
 
   Defaults (RESET DEFAULTS, tap twice within 2 s): UNI 1000→1500 µs (BIDI high 1750),
   ramps 1000 ms, dwells 3000 ms, 10 cycles, FWD. The profile is locked while a run is
   active and snapshotted at its start.
 - **CYCLE** runs RAMP UP → DWELL HI → RAMP DOWN → DWELL LO until STOP CYCLE (which leaves
   the output armed at idle). LOG MODE = CYCLE still auto-logs these runs.
-- **LOG TEST** (start it disarmed — it arms itself): opens `LOG_<n>_TEST_<V>V.CSV`, 3 s
-  pre-roll at idle (the arming hold runs inside it), N cycles, 5 s post-roll, closes the log
-  (`reason=complete`) and disarms. ABORT TEST jumps to the post-roll at idle; header STOP
+- **LOG TEST**: opens `LOG_<n>_TEST_<V>V.CSV`, the pre-roll at idle (arming hold inside it),
+  N cycles, 5 s post-roll, closes the log (`reason=complete`) and stays live at idle with the
+  30 s fuse running. Starting it with the output already live is fine — it goes to neutral
+  first, which also means the card mount can never block with a motor under throttle. ABORT TEST jumps to the post-roll at idle; header STOP
   cuts the output and finishes the post-roll unpowered — either way the spin-down is logged
   and the file ends `reason=aborted`. The header carries a `# profile …` line (ESC type,
   pulses, ramps, dwells, cycles, direction) that the log analyzer shows in its stats box,
   and the main chart gains an ESC-pulse strip. While a test runs, the LOG screen's
   START/STOP and serial `g` are refused, the DURATION limit does not apply, and the CURRENT
   trigger stays out of the way.
+
+### Settings
+
+Six rows: **THEME**, **FILTER**, **CLOCK** (below), **ESC PRE-ROLL** (0–15 s in 0.5 s steps,
+hold to repeat), **SETTINGS** (SAVE — the only thing that writes flash, because a commit
+halts both cores), and **TOOLS** (calibration DUMP over serial, and DEV MODE). Everything
+takes effect in RAM immediately; SAVE is what survives a power cycle.
+
+### The wall clock (v3.4)
+
+There is no RTC chip and no backup cell, so the clock is an epoch base plus `millis()`. It
+exists to stamp logs with the day and time they were recorded; it is not a timebase for
+anything measured (that is still the 13.158 ms tick). Local time only — no timezone, no DST.
+
+- **Setting it:** Settings → CLOCK → **SET CLOCK** (YEAR / MONTH / DAY / HOUR / MIN tiles and
+  the same editor row as the cycle profile, hold to repeat; APPLY sets the seconds to 00), or
+  the serial `c` command, which is accurate to the second. `tools\capture_stream.py` sends
+  `c <epoch>` on connect, so plugging in the laptop syncs the meter (`--no-set-clock` to skip).
+- **Across power cycles:** the time is copied into the settings blob at log start and stop,
+  on an explicit SAVE, when the clock is set, and every 5 minutes while idle. On boot the
+  clock resumes from that copy, so it comes back with the right date and the time of the last
+  save — behind by however long the meter was off. That state is reported everywhere as
+  **MAY BE BEHIND** (`state=restored` in a log header) rather than being passed off as exact.
+- **Writes are deferred, never forced.** An EEPROM commit stalls both cores for a few ms, so
+  no clock save happens while a log is recording or while the ESC output is live — a stall
+  there would punch a hole in a capture, or leave the STOP button unanswered with a motor
+  spinning. A save asked for at such a moment is remembered and written at the next idle pass.
+- Drift between syncs is the crystal's, ±30 ppm worst case (about 2.6 s/day).
+- Out-of-range times (before 2020 or after 2099) are refused, on the screen, over serial and
+  on load from flash — milliseconds sent as seconds would otherwise stamp every log 2106.
 
 ### Logging (v3.2)
 
@@ -292,7 +351,8 @@ A stepper button that can go no further in its direction is greyed out.
   blocks core 0 for ~2 s, which is not acceptable while a motor spins up. Insert the card and
   press REMOUNT SD (or serial `m`).
 - Files are named `LOG_<n>_<MODE>_<V>V.CSV`, e.g. `LOG_07_CURRENT_22.4V.CSV`. `n` counts up
-  from the highest number already on the card (no RTC, so `n` is the order), `MODE` is the
+  from the highest number already on the card (the clock is not in the name — `n` is the
+  order, and the date is in the header), `MODE` is the
   log-mode setting, and `V` is the pack voltage at the start — for a current trigger, the
   resting voltage just before the load came on, not the sag. Not pre-allocated (a power pull would otherwise leave
   megabytes of junk after the data); 512 B block writes, synced every 2 s. Mounting runs a
@@ -307,8 +367,10 @@ t_ms,i_raw,i_filt,v_raw,v_filt,w,t_c,mah,wh,esc_us
 
 `t_ms` from log start · `_raw` is the instrument, `_filt` is what the screen showed ·
 `w` = `v_raw × i_raw` · `t_c` blank on a thermistor fault · `mah`/`wh` since log start ·
-`esc_us` is what was on GP1 that tick, 0 = off. A closing `# end` line carries the reason,
-rows, totals, peaks and drop counts. pandas: `pd.read_csv(f, comment="#")`.
+`esc_us` is what was on GP1 that tick, 0 = off. A `# clock` header line carries the wall
+clock at the start (`2026-09-23 14:05:30 local  epoch=…  state=set|restored|unset`), and the
+closing `# end` line carries the reason, rows, totals, peaks, drop counts and `stopped=`
+(ISO, with a `T`, so every key on that line stays space-free). pandas: `pd.read_csv(f, comment="#")`.
 
 **USB stream** — same rows **without energy**, `t_ms` since boot:
 

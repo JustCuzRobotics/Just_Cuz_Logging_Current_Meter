@@ -130,6 +130,17 @@ class MeterLog:
             elif h.startswith("end "):
                 for k, v in re.findall(r"(\w+)=(\S+)", h):
                     self.end[k] = v
+            elif h.startswith("clock "):
+                # Wall clock (firmware v3.4+): "clock 2026-09-23 14:05:30 local
+                # epoch=... state=set|restored|unset". state says how much to
+                # trust it - the meter has no RTC, so "restored" means the date
+                # is right but the time is behind by however long it was off.
+                m = re.match(r"clock (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", h)
+                if m:
+                    self.meta["started_at"] = m.group(1)
+                m = re.search(r"state=(\w+)", h)
+                if m:
+                    self.meta["clock_state"] = m.group(1)
             elif h.startswith("profile "):
                 # Log Test profile (firmware v3.3+): esc=UNI low_us=1000 ...
                 self.meta["profile"] = dict(re.findall(r"(\w+)=(\S+)", h))
@@ -239,6 +250,10 @@ class MeterLog:
             "buffer_drops": self.end.get("buffer_drops", "-"),
             "i_gain_nominal": self.meta.get("i_gain_nominal", False),
             "firmware": self.meta.get("firmware", "-"),
+            "started_at": self.meta.get("started_at", "-"),
+            "clock_state": self.meta.get("clock_state", "-"),
+            # written as 2026-09-23T14:06:12 so the key=value parse survives
+            "stopped_at": self.end.get("stopped", "-").replace("T", " "),
         }
         return self.metrics
 
@@ -250,6 +265,11 @@ class MeterLog:
             mode = f"{mode} ({m['start_cause']})"
         lines = [
             f"Log mode: {mode}",
+        ]
+        if m["started_at"] != "-" and m["clock_state"] != "unset":
+            note = "" if m["clock_state"] == "set" else "  (clock restored - may be behind)"
+            lines.append(f"Started: {m['started_at']}{note}")
+        lines += [
             f"Runtime: {m['runtime']}",
             f"Energy used: {m['energy_mah']:.1f} mAh / {m['energy_wh']:.2f} Wh",
             f"Peak current: {m['peak_current_a']:.1f} A @ {m['peak_current_time_s']:.1f} s",

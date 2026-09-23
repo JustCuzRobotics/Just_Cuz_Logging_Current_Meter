@@ -13,6 +13,12 @@ telemetry, [log] events): they are echoed to the console, and kept in the
 file only with --keep-comments. A pc_time column (seconds since capture start,
 PC clock) is added so rows can be lined up with anything else you recorded.
 
+On connect this also sets the meter's clock to the PC's wall clock (the 'c'
+serial command), so logs recorded in this session are stamped to the second -
+the meter has no RTC and otherwise comes back from a power cycle reading the
+time of its last flash save. Pass --no-set-clock to leave the meter's clock
+alone.
+
 Streaming is toggled on the meter by the 's' key. If no data row arrives
 within 1.5 s of opening the port, this script sends 's' once to turn it on,
 and sends 's' again on exit to turn it back off. If the stream was already on
@@ -21,6 +27,7 @@ and sends 's' again on exit to turn it back off. If the stream was already on
 Stop with Ctrl+C.
 """
 import argparse
+import calendar
 import datetime as dt
 import sys
 import time
@@ -53,6 +60,8 @@ def main():
     ap.add_argument("--out", help="output CSV (default: meter_YYYYmmdd_HHMMSS.csv)")
     ap.add_argument("--keep-comments", action="store_true", help="also write '#' lines to the file")
     ap.add_argument("--quiet", action="store_true", help="do not echo '#' lines to the console")
+    ap.add_argument("--no-set-clock", action="store_true",
+                    help="do not set the meter's clock from this PC on connect")
     args = ap.parse_args()
 
     port = args.port or find_port()
@@ -61,6 +70,15 @@ def main():
     ser = serial.Serial(port, 115200, timeout=0.2)
     ser.dtr = True                     # the meter only talks once DTR is up
     print(f"# capturing {port} -> {out_name}   (Ctrl+C to stop)")
+
+    if not args.no_set_clock:
+        # The meter keeps LOCAL time as plain epoch seconds - no timezone - so
+        # the PC's local wall clock is encoded as if it were UTC.
+        now = dt.datetime.now()
+        epoch = calendar.timegm(now.timetuple())
+        time.sleep(0.3)                # let the port settle before the command
+        ser.write(f"c {epoch}\n".encode("ascii"))
+        print(f"# set meter clock to {now:%Y-%m-%d %H:%M:%S} (epoch {epoch})")
 
     t0 = time.monotonic()
     rows = 0

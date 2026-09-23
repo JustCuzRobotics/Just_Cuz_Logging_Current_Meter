@@ -17,7 +17,7 @@
 #include "Layout.h"
 
 enum ScreenId { SCR_HOME, SCR_LIVE, SCR_GRAPH, SCR_SETTINGS, SCR_DEV, SCR_LOG,
-                SCR_TEST_MANUAL, SCR_TEST_CYCLE, SCR_TEST_LOG };
+                SCR_TEST_MANUAL, SCR_TEST_CYCLE, SCR_TEST_LOG, SCR_CLOCK };
 extern ScreenId gScreen;
 
 void   paintScreen(ScreenId s);
@@ -57,6 +57,7 @@ bool testHeaderDispatch(ScreenId s, int8_t id);   /* true if it was a header id 
 void updateTestHeaderTick(bool forceClear);
 void testStatusLine(const char *text, uint16_t color, bool forceClear);
 int8_t testHeaderHit(int16_t x, int16_t y);
+bool   testHeaderRepeatable(int8_t id);   /* the ARM button's hold-to-CUT */
 
 void   paintTestManualOnce();
 void   updateTestManualTick(bool forceClear = false);
@@ -72,6 +73,14 @@ void   updateTestCycleTick(bool forceClear = false);
 int8_t testCycleHit(int16_t x, int16_t y);
 void   testCycleSetPressed(int8_t id, bool pressed);
 void   testCycleDispatch(int8_t id);
+
+/* ---- SET CLOCK (ScreenClock.cpp), a sub-screen of Settings ---- */
+void   paintClockOnce();
+void   updateClockTick(bool forceClear = false);
+int8_t clockHit(int16_t x, int16_t y);
+void   clockSetPressed(int8_t id, bool pressed);
+void   clockDispatch(int8_t id);
+bool   clockRepeatable(int8_t id);
 
 /* ---- press-and-hold, drag ----
  * pumpTouchEvents() calls these for the target that is currently held:

@@ -156,6 +156,11 @@ void updateTestManualTick(bool forceClear) {
   else if (escHolding())
     snprintf(buf, sizeof buf, "ARMING AT %u US  %lus",
              (unsigned)escIdleUs(), (unsigned long)((escHoldRemainMs() + 999) / 1000));
+  else if (escCutRemainMs())
+    /* A finished run leaves the output live at neutral so the next one starts
+     * at once; this is the fuse that cuts it if the bench is left alone. */
+    snprintf(buf, sizeof buf, "LIVE AT IDLE - CUTS IN %lus",
+             (unsigned long)((escCutRemainMs() + 999) / 1000));
   else
     snprintf(buf, sizeof buf, "ARMED  OUT %u US%s",
              (unsigned)gEscOutUs,
@@ -207,6 +212,7 @@ void testManualRelease(int8_t id) {
 }
 
 bool testManualRepeatable(int8_t id) {
+  if (id < TH_N) return testHeaderRepeatable(id);
   return id >= TMM_M50 && id <= TMM_P50 && !sliderMode() && manualLive();
 }
 

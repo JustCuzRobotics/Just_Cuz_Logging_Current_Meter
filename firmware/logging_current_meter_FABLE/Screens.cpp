@@ -13,6 +13,7 @@ void paintScreen(ScreenId s) {
     case SCR_TEST_CYCLE:
     case SCR_TEST_LOG:    paintTestCycleOnce();  break;
     case SCR_SETTINGS: paintSettingsOnce(); break;
+    case SCR_CLOCK: paintClockOnce(); break;
     case SCR_DEV:   paintDevOnce();   break;
     case SCR_LOG:   paintLogOnce();   break;
   }
@@ -39,6 +40,7 @@ int8_t hitTestScreen(ScreenId s, int16_t x, int16_t y) {
     case SCR_TEST_CYCLE:
     case SCR_TEST_LOG:    return testCycleHit(x, y);
     case SCR_SETTINGS: return hitTargets(SET_T,  SET_BTN_N,  x, y);
+    case SCR_CLOCK: return clockHit(x, y);
     case SCR_DEV:   return hitTargets(DEV_T,   DEV_BTN_N,    x, y);
     case SCR_LOG:   return hitTargets(LOG_T,   LOG_BTN_N,    x, y);
   }
@@ -54,6 +56,7 @@ void dispatch(ScreenId s, int8_t id) {
     case SCR_TEST_CYCLE:
     case SCR_TEST_LOG:    testCycleDispatch(id);  break;
     case SCR_SETTINGS: settingsDispatch(id); break;
+    case SCR_CLOCK: clockDispatch(id); break;
     case SCR_DEV:   devDispatch(id);   break;
     case SCR_LOG:   logDispatch(id);   break;
   }
@@ -68,6 +71,7 @@ void setPressedVisual(ScreenId s, int8_t id, bool pressed) {
     case SCR_TEST_CYCLE:
     case SCR_TEST_LOG:    testCycleSetPressed(id, pressed);  break;
     case SCR_SETTINGS: settingsSetPressed(id, pressed); break;
+    case SCR_CLOCK: clockSetPressed(id, pressed); break;
     case SCR_DEV:   devSetPressed(id, pressed);   break;
     case SCR_LOG:   logSetPressed(id, pressed);   break;
   }
@@ -76,7 +80,7 @@ void setPressedVisual(ScreenId s, int8_t id, bool pressed) {
 /* Home has nothing that changes per tick. Test Mode does, but only because
  * of the auto-cycle countdown, so it runs at the slow Dev cadence. */
 void tickScreen(ScreenId s) {
-  static uint32_t lastLive = 0, lastGraph = 0, lastDev = 0, lastTest = 0, lastLog = 0;
+  static uint32_t lastLive = 0, lastGraph = 0, lastDev = 0, lastTest = 0, lastLog = 0, lastClock = 0;
   uint32_t now = millis();
   switch (s) {
     case SCR_LIVE:
@@ -101,6 +105,10 @@ void tickScreen(ScreenId s) {
       break;
     case SCR_LOG:
       if (now - lastLog >= DEV_FRAME_MS) { lastLog = now; updateLogTick(); }
+      break;
+    /* The clock screen only has a seconds hand to move. */
+    case SCR_CLOCK:
+      if (now - lastClock >= 250) { lastClock = now; updateClockTick(); }
       break;
     default: break;
   }
@@ -143,6 +151,7 @@ void checkTargetOverlaps() {
     warnOverlaps(all, n, "TEST CYCLE");
   }
   warnOverlaps(SET_T,   SET_BTN_N,   "SETTINGS");
+  warnOverlaps(CLK_T,   CLK_BTN_N,   "SET CLOCK");
   warnOverlaps(DEV_T,   DEV_BTN_N,   "DEV");
   warnOverlaps(LOG_T,   LOG_BTN_N,   "LOG");
 }
@@ -156,7 +165,9 @@ bool screenRepeatable(ScreenId s, int8_t id) {
     case SCR_TEST_CYCLE:
     case SCR_TEST_LOG:    return testCycleRepeatable(id);
     case SCR_LOG:         return id >= LOG_RATE_M && id <= LOG_DUR_P;
-    case SCR_SETTINGS:    return id == SET_FILTER_M || id == SET_FILTER_P;
+    case SCR_SETTINGS:    return id == SET_FILTER_M || id == SET_FILTER_P ||
+                                 id == SET_PRE_M || id == SET_PRE_P;
+    case SCR_CLOCK:       return clockRepeatable(id);
     default:              return false;
   }
 }

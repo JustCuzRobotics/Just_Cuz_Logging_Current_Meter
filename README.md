@@ -149,12 +149,13 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
 - **Current gain is the last uncalibrated channel.** Voltage, thermistor and the current
   zero are done and baked in.
 - **The touchscreen UI is built and running**, in `firmware/logging_current_meter_FABLE/`
-  (v3.3): live V/I/T/W, energy accumulation, an autoscaled 5 s graph, **Test Mode** (ESC
+  (v3.5): live V/I/T/W, energy accumulation, an autoscaled 5 s graph, **Test Mode** (ESC
   signal on GP1 for uni- or bidirectional ESCs — manual buttons or slider with a dead-man
   option, ramped auto-cycle, and a counted **Log Test** that records itself), **SD logging**
   (manual, Test-cycle or current-threshold start, 1–15 min duration) with a **USB CSV
   stream**, a Settings screen
-  with flash persistence, dark and navy themes, a tunable weighted filter on the V and I
+  with flash persistence and a settable wall clock that stamps every log with the date and
+  time it was recorded, dark and navy themes, a tunable weighted filter on the V and I
   readings, and a touch diagnostic screen with a serial telemetry harness. Its display and
   touch stack is factored out into `libraries/JCR_TouchScreen/`. Architecture and the
   measured sampling constraints are in `DESIGN.md` §11.
@@ -163,7 +164,9 @@ live pad, a resistor placed inside a soldermask aperture, a netclass clearance t
   39 minutes) and now rewrites it within 500 ms; the per-register breakdown in v3.1c will
   say whether the part is resetting or one register is flaky.
 - **v3.2a is bench-verified** (ESC timing, SD logging, USB stream, log analyzer).
-  **v3.3** (the Test Mode rework) is compile-checked and host-tested, not yet on the bench.
+  **v3.3** (the Test Mode rework), **v3.4** (the wall clock) and **v3.5** (ESC arming,
+  pre-roll and stop escalation) are compile-checked and host-tested; v3.3's bench run turned
+  up the arming problems v3.5 fixes, and v3.5 itself is not yet on the bench.
 - ~~**microSD MISO tri-state risk.**~~ Inconclusive so far, and **not a blocker** — the
   panel is driven write-only and works. With no card in the slot nothing drives MISO on
   these modules, so `0xFF` is the expected reading. The §11 question only has meaning with
