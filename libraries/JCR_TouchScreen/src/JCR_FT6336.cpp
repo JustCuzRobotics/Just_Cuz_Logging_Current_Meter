@@ -21,7 +21,7 @@ JCR_FT6336::JCR_FT6336(TwoWire &wire, int8_t sdaPin, int8_t sclPin,
       _periodUs(5000), _nextUs(0), _sampleCount(0), _hzWindowMs(0),
       _down(false), _emptyRun(0), _releaseConfirm(2), _jumpPx(60),
       _lastRawX(0), _lastRawY(0), _downMicros(0),
-      _seq(0), _pubRawX(0), _pubRawY(0), _pubPoints(0), _pubDown(false),
+      _seq(0), _pubAtMicros(0), _pubRawX(0), _pubRawY(0), _pubPoints(0), _pubDown(false),
       _pubDownMicros(0), _qHead(0), _qTail(0), _statsResetReq(false),
       _svcMaxResetReq(false), _reinitReq(false),
       _i2cHz(400000), _sampleHzCfg(200), _lastVerifyMs(0), _wireStarted(false) {
@@ -285,6 +285,7 @@ void JCR_FT6336::serviceNow() {
   _pubDownMicros = _downMicros;
   __sync_synchronize();
   _seq++;
+  _pubAtMicros = micros();     /* single aligned store: atomic on the M0+ */
 }
 
 void JCR_FT6336::getTouch(JCRTouchPoint &out) const {

@@ -205,6 +205,13 @@ glyph then occupies the same cell and the field width never shifts.
 | `serviceUsMax` | Longest single sample transaction. A slow or stuck I2C bus becomes a number. `resetServiceMax()` clears it per window. |
 | `reinits` | `requestReinit()` calls honoured — re-runs `begin()` on the servicing core, safe to call from the other one. A bench test for "has the controller lost its mind". |
 
+**`lastGoodSampleMicros()`** (1.2.0) is the `micros()` of the last sample that was read and
+published. It stops advancing when reads fail (I2C error, impossible contact count,
+out-of-range point) or the servicing core stalls — in all of which `isDown()` keeps its last
+value and no release event is queued. Anything safety-relevant held under a finger (a
+dead-man throttle, a jog control) should treat "stale for more than a few samples" as a
+release rather than trusting a frozen `isDown()`.
+
 ## Requirements
 
 RP2040 with the [arduino-pico](https://github.com/earlephilhower/arduino-pico) core (uses its

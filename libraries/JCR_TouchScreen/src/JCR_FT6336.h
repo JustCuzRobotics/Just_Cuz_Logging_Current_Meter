@@ -105,6 +105,12 @@ class JCR_FT6336 {
   /* Latest debounced state — coherent snapshot, safe from the other core. */
   void getTouch(JCRTouchPoint &out) const;
   bool isDown() const;
+  /* micros() of the last sample that was read AND published. It stops
+   * advancing when reads fail (I2C error, impossible contact count, out-of-
+   * range point) or the servicing core stalls — so a consumer holding a
+   * safety-relevant press (a dead-man control) can treat "stale for > N ms"
+   * as a release instead of trusting a frozen isDown(). */
+  uint32_t lastGoodSampleMicros() const { return _pubAtMicros; }
 
   /* Drain queued press/release events. Returns false when empty. */
   bool popEvent(JCRTouchEvent &out);
@@ -165,6 +171,7 @@ class JCR_FT6336 {
 
   /* seqlock-published live sample */
   volatile uint32_t _seq;
+  volatile uint32_t _pubAtMicros;
   volatile uint16_t _pubRawX, _pubRawY;
   volatile uint8_t  _pubPoints;
   volatile bool     _pubDown;
